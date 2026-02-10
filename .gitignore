@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+target/
+
+# Build output
+.next/
+out/
+dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+secrets/
+
+# Agent results (regenerated each run)
+agent-results/
+
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
+# Web
+web/.next/
+web/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Lock files from agent task claims
+coordination/current_tasks/*.lock
+
+# Local Claude config
+CLAUDE.local.md
+.claude/settings.local.json

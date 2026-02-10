@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "backend",
+    "pallets/playlist-registry",
+    "pallets/access-control",
+    "pallets/token-gate",
+]
+
+[workspace.dependencies]
+serde = { version = "1", default-features = false, features = ["derive"] }
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
