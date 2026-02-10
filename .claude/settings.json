@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo audit:*)",
+      "Bash(cargo run:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npx axe-core:*)",
+      "Bash(npm audit:*)",
+      "Bash(git diff:*)",
+      "Bash(git status)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(./secrets/**)",
+      "Write(./production.*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$(date): Agent completed in $(pwd)\" >> /tmp/agent-completions.log"
+          }
+        ]
+      }
+    ]
+  }
+}

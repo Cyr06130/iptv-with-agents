@@ -1,0 +1,15 @@
+[package]
+name = "iptv-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["stream"] }
+tower-http = { version = "0.5", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = { workspace = true }
