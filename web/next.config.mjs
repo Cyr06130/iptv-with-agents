@@ -2,18 +2,18 @@
 const nextConfig = {
   reactStrictMode: true,
   webpack: (config, { isServer }) => {
-    // PAPI uses WASM modules for sr25519 cryptography
+    // PAPI + host-papp use WASM modules (sr25519, verifiablejs)
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
       layers: true,
     };
 
-    // Handle WASM files
-    config.module.rules.push({
-      test: /\.wasm$/,
-      type: "asset/resource",
-    });
+    // Silence "target doesn't support async/await" warning for WASM modules
+    // All modern browsers support async/await
+    if (!isServer) {
+      config.target = "web";
+    }
 
     if (!isServer) {
       config.resolve.fallback = {
@@ -36,7 +36,7 @@ const nextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "connect-src 'self' https: http: wss://bulletin.dotspark.app",
+              "connect-src 'self' https: http: wss:",
               "img-src 'self' https: data:",
               "media-src 'self' https: blob:",
               "font-src 'self' https://fonts.gstatic.com",

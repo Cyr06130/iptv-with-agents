@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { usePlaylist } from "@/hooks/usePlaylist";
 import { useChainPlaylist } from "@/hooks/useChainPlaylist";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useUnifiedAccount } from "@/contexts/UnifiedAccountContext";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { ChannelList } from "@/components/ChannelList";
 import { SearchBar } from "@/components/SearchBar";
@@ -28,7 +28,7 @@ export default function Home(): JSX.Element {
     removeChannels,
   } = usePlaylist();
 
-  const { selectedAccount: account } = useWalletContext();
+  const { selectedAccount: account } = useUnifiedAccount();
   const { loadFromChain } = useChainPlaylist();
 
   const totalChannels = playlist?.channels.length ?? 0;

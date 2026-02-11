@@ -2,12 +2,6 @@
 
 import type { Signer } from "@polkadot/types/types";
 
-declare global {
-  interface Window {
-    injectedWeb3?: Record<string, { enable: (appName: string) => Promise<unknown> }>;
-  }
-}
-
 const APP_NAME = "IPTV_Stream";
 
 export type DetectedWallet = {

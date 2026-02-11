@@ -1,18 +1,7 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { WalletProvider } from "@/contexts/WalletContext";
+import { ClientOnlyPolkadotProvider } from "@/components/polkadot-ui/client-only-provider";
 
-/**
- * Client-only wrapper that prevents SSR errors from wallet extensions
- * reading `window.injectedWeb3`.
- *
- * Pattern taken from the Spektr SDK demo's ClientOnlyPolkadotProvider.
- */
-function InnerProviders({ children }: { children: React.ReactNode }): JSX.Element {
-  return <WalletProvider>{children}</WalletProvider>;
+export function Providers({ children }: { children: React.ReactNode }): JSX.Element {
+  return <ClientOnlyPolkadotProvider>{children}</ClientOnlyPolkadotProvider>;
 }
-
-export const Providers = dynamic(() => Promise.resolve(InnerProviders), {
-  ssr: false,
-});

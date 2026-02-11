@@ -4,7 +4,7 @@ import { ConnectWallet } from "@/components/ConnectWallet";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "IPTV Stream",
+  title: "IPTV for friends!",
   description: "Decentralized IPTV streaming",
 };
 
@@ -29,7 +29,7 @@ export default function RootLayout({
             <header className="sticky top-0 z-40 h-16 bg-[var(--color-surface)]/95 backdrop-blur-xl border-b border-[var(--color-border)] px-6 md:px-12">
               <div className="h-full flex items-center justify-between max-w-[1536px] mx-auto">
                 <h1 className="font-serif text-2xl text-[var(--color-text-primary)] tracking-tight">
-                  IPTV Stream
+                  IPTV for friends!
                 </h1>
                 <ConnectWallet />
               </div>
