@@ -26,11 +26,13 @@ export default function RootLayout({
       <body className="font-sans">
         <Providers>
           <div className="min-h-screen flex flex-col bg-[var(--color-bg)]">
-            <header className="sticky top-0 z-40 h-16 bg-[var(--color-surface)]/95 backdrop-blur-xl border-b border-[var(--color-border)] px-6 md:px-12">
-              <div className="h-full flex items-center justify-between max-w-[1536px] mx-auto">
+            <header className="sticky top-0 z-40 h-16 bg-[var(--color-surface)]/95 backdrop-blur-xl border-b border-[var(--color-border)]">
+              <div className="fixed top-0 left-0 z-50 h-16 flex items-center pl-4">
                 <h1 className="font-serif text-2xl text-[var(--color-text-primary)] tracking-tight">
                   IPTV for friends!
                 </h1>
+              </div>
+              <div className="fixed top-0 right-0 z-50 h-16 flex items-center pr-4">
                 <ConnectWallet />
               </div>
             </header>

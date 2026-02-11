@@ -28,6 +28,7 @@ pub fn parse_m3u(content: &str) -> Vec<Channel> {
                 .unwrap_or_default();
             let logo_url = extract_attribute(line, "tvg-logo");
             let group = extract_attribute(line, "group-title").unwrap_or_default();
+            let tvg_id = extract_attribute(line, "tvg-id");
 
             // Advance past any blank or comment lines to find the stream URL.
             i += 1;
@@ -51,6 +52,7 @@ pub fn parse_m3u(content: &str) -> Vec<Channel> {
                         logo_url,
                         stream_url,
                         is_live: false,
+                        tvg_id,
                     });
                 }
             }
@@ -169,6 +171,20 @@ https://stream.example.com/also-good.m3u8
             Some("News".to_string())
         );
         assert_eq!(extract_attribute(line, "nonexistent"), None);
+    }
+
+    #[test]
+    fn parse_extracts_tvg_id() {
+        let content = r#"#EXTM3U
+#EXTINF:-1 tvg-id="CNN.us" tvg-name="CNN" group-title="News",CNN
+https://stream.example.com/cnn.m3u8
+#EXTINF:-1 tvg-name="NoId" group-title="Music",NoId
+https://stream.example.com/noid.m3u8
+"#;
+        let channels = parse_m3u(content);
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].tvg_id.as_deref(), Some("CNN.us"));
+        assert!(channels[1].tvg_id.is_none());
     }
 
     #[test]

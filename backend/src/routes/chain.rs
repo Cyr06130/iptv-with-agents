@@ -193,6 +193,7 @@ fn parse_chain_channels(data: &Value) -> Vec<Channel> {
                 logo_url: logo_url.map(String::from),
                 stream_url: stream_url.to_string(),
                 is_live: true,
+                tvg_id: None,
             })
         })
         .collect()

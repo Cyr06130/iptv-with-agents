@@ -11,6 +11,7 @@ import { UploadButton } from "@/components/UploadButton";
 import { SaveToChainButton } from "@/components/SaveToChainButton";
 import { LoadFromChainPrompt } from "@/components/LoadFromChainPrompt";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { EpgOverlay } from "@/components/EpgOverlay";
 import type { Channel, ChainPlaylistResponse } from "@/lib/types";
 
 export default function Home(): JSX.Element {
@@ -37,6 +38,7 @@ export default function Home(): JSX.Element {
 
   const [chainPrompt, setChainPrompt] = useState<ChainPlaylistResponse | null>(null);
 
+  const [epgChannel, setEpgChannel] = useState<Channel | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -191,16 +193,26 @@ export default function Home(): JSX.Element {
             editMode={editMode}
             selectedIds={selectedForDelete}
             onToggleSelect={handleToggleSelect}
+            onEpgClick={(ch) => setEpgChannel((prev) => prev?.id === ch.id ? null : ch)}
           />
         </div>
       </div>
 
       {/* Player */}
       <div className="w-2/3 p-6 bg-[var(--color-bg)]">
-        <VideoPlayer
-          src={selectedChannel?.stream_url ?? null}
-          poster={selectedChannel?.logo_url ?? undefined}
-        />
+        <div className="relative h-full">
+          <VideoPlayer
+            src={selectedChannel?.stream_url ?? null}
+            poster={selectedChannel?.logo_url ?? undefined}
+          />
+          {epgChannel && (
+            <EpgOverlay
+              channelId={epgChannel.tvg_id ?? epgChannel.id}
+              channelName={epgChannel.name}
+              onClose={() => setEpgChannel(null)}
+            />
+          )}
+        </div>
       </div>
 
       {/* Chain playlist prompt */}

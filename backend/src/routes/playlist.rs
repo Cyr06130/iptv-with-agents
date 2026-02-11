@@ -95,6 +95,12 @@ pub async fn get_playlist_m3u(
     let mut m3u = String::from("#EXTM3U\n");
 
     for ch in &playlist.channels {
+        let tvg_id_attr = ch
+            .tvg_id
+            .as_deref()
+            .map(|id| format!(" tvg-id=\"{id}\""))
+            .unwrap_or_default();
+
         let logo_attr = ch
             .logo_url
             .as_deref()
@@ -102,8 +108,8 @@ pub async fn get_playlist_m3u(
             .unwrap_or_default();
 
         m3u.push_str(&format!(
-            "#EXTINF:-1 tvg-name=\"{}\" group-title=\"{}\"{},{}\n{}\n",
-            ch.name, ch.group, logo_attr, ch.name, ch.stream_url
+            "#EXTINF:-1{} tvg-name=\"{}\" group-title=\"{}\"{},{}\n{}\n",
+            tvg_id_attr, ch.name, ch.group, logo_attr, ch.name, ch.stream_url
         ));
     }
 

@@ -9,6 +9,7 @@ type ChannelListProps = {
   editMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onEpgClick?: (channel: Channel) => void;
 };
 
 export function ChannelList({
@@ -18,6 +19,7 @@ export function ChannelList({
   editMode,
   selectedIds,
   onToggleSelect,
+  onEpgClick,
 }: ChannelListProps): JSX.Element {
   if (channels.length === 0) {
     return (
@@ -89,6 +91,26 @@ export function ChannelList({
                 </div>
               </div>
             </button>
+            {!editMode && channel.tvg_id && onEpgClick && (
+              <button
+                type="button"
+                title="Program Guide"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEpgClick(channel);
+                }}
+                className="pr-3 text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)] transition-colors shrink-0"
+              >
+                <svg
+                  className="w-8 h-6"
+                  fill="currentColor"
+                  viewBox="0 0 200 140"
+                >
+                  <rect x="4" y="4" width="192" height="132" rx="18" ry="18" fill="none" stroke="currentColor" strokeWidth="14" />
+                  <text x="100" y="95" textAnchor="middle" fontSize="72" fontWeight="bold" fontFamily="sans-serif" fill="currentColor">EPG</text>
+                </svg>
+              </button>
+            )}
           </div>
         );
       })}

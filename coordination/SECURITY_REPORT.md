@@ -164,3 +164,124 @@ as a valid SS58 address before being used in remark construction and hex searchi
 **Location:** `web/src/lib/chain.ts:518-519`
 The `// eslint-disable-next-line @typescript-eslint/no-explicit-any` override should be removed
 by properly typing the caller function.
+
+---
+
+# EPG Feature Security Review
+
+## Audit Scope
+
+EPG (Electronic Program Guide) feature added across backend and frontend:
+
+**Backend (Rust/Axum):**
+- `backend/src/models/epg.rs` -- EpgProgram, EpgSchedule, EpgNowNext, EpgCache
+- `backend/src/services/epg_parser.rs` -- XMLTV parser using quick-xml 0.36
+- `backend/src/routes/epg.rs` -- GET /api/epg/{channel_id}, GET /api/epg/{channel_id}/now
+- `backend/src/config.rs` -- EPG_SOURCE_URL, EPG_TTL_HOURS, EPG_REFRESH_MINS
+- `backend/src/main.rs` -- EPG cache init, background fetcher (fetch_and_load_epg, start_epg_fetcher)
+- `backend/src/models/channel.rs` -- tvg_id field
+- `backend/src/services/m3u_parser.rs` -- tvg-id extraction
+
+**Frontend (TypeScript/React):**
+- `web/src/lib/types.ts` -- EpgProgram, EpgSchedule, EpgNowNext types
+- `web/src/hooks/useEpg.ts` -- EPG data fetching hook
+- `web/src/components/EpgOverlay.tsx` -- EPG overlay UI component
+- `web/src/components/ChannelList.tsx` -- EPG icon on channel rows
+
+## EPG Findings Summary
+
+| ID   | Severity | Title                                                 | Status |
+|------|----------|-------------------------------------------------------|--------|
+| E1   | MEDIUM   | SSRF via EPG_SOURCE_URL Environment Variable          | Open   |
+| E2   | MEDIUM   | No HTTP Timeout on EPG Fetch                          | Open   |
+| E3   | MEDIUM   | Unbounded EPG Response Body Download                  | Open   |
+| E4   | LOW      | EPG Cache Has No Maximum Entry Limit                  | Open   |
+| E5   | LOW      | Unvalidated icon_url from XMLTV Data                  | Open   |
+| E6   | LOW      | channel_id Reflected in Error Response JSON           | Open   |
+| E7   | INFO     | unwrap_or_default on Attribute Parsing Silently Drops | Open   |
+| E8   | INFO     | CORS Allows All Origins                               | Open   |
+
+## EPG Findings Detail
+
+### E1: MEDIUM -- SSRF via EPG_SOURCE_URL Environment Variable
+
+- **File**: `backend/src/main.rs:126`
+- **Issue**: The `fetch_and_load_epg` function calls `reqwest::get(epg_url)` where `epg_url` comes from the `EPG_SOURCE_URL` environment variable. There is no validation that this URL points to an external XMLTV source versus an internal service. An operator misconfiguration or env injection could cause the backend to make requests to internal network addresses (e.g., `http://169.254.169.254/latest/meta-data/` on AWS, or `http://localhost:xxxx/admin`).
+- **Risk**: Server-Side Request Forgery (SSRF). If the backend runs in a cloud environment, this could leak instance metadata, access internal APIs, or scan internal ports.
+- **Recommendation**: Validate `EPG_SOURCE_URL` at startup:
+  1. Require `https://` scheme (or at minimum `http://` -- reject `file://`, `ftp://`, etc.)
+  2. Reject RFC 1918 private addresses, link-local (169.254.x.x), and loopback (127.x.x.x)
+  3. Reject hostnames that resolve to private IPs (DNS rebinding defense)
+
+### E2: MEDIUM -- No HTTP Timeout on EPG Fetch
+
+- **File**: `backend/src/main.rs:126`
+- **Issue**: `reqwest::get(epg_url)` uses the default reqwest client with no timeout configured. Compare with `channel_checker.rs:14-15` which correctly builds a client with `.timeout(timeout)`. A slow or unresponsive EPG server would block the async task indefinitely, preventing EPG cache refreshes and potentially leaking a tokio task slot.
+- **Risk**: Denial of service via resource exhaustion if the EPG source hangs. The background fetcher loop at lines 160-171 would stall permanently.
+- **Recommendation**: Build a dedicated `reqwest::Client` with a connect and response timeout (e.g., 30 seconds) for EPG fetches. Store it in `AppState` or construct it in `start_epg_fetcher`.
+
+### E3: MEDIUM -- Unbounded EPG Response Body Download
+
+- **File**: `backend/src/main.rs:126`
+- **Issue**: The call `reqwest::get(epg_url).await?.text().await?` downloads the entire response body into memory as a `String` before passing it to the parser. While `parse_xmltv` checks `MAX_XML_SIZE` (50 MB) after the download, the download itself has no size limit. A malicious or misconfigured EPG source could serve a multi-gigabyte response, causing the backend to OOM-crash before the 50 MB check runs.
+- **Risk**: Memory exhaustion denial of service. The backend process could be killed by the OS OOM killer.
+- **Recommendation**: Use `reqwest::Response::bytes()` with a streaming reader that aborts after 50 MB. Alternatively, check `Content-Length` header first (though it can be spoofed, it provides an early rejection path), then stream with a byte counter.
+
+### E4: LOW -- EPG Cache Has No Maximum Entry Limit
+
+- **File**: `backend/src/models/epg.rs:57-58`
+- **Issue**: `EpgCache.schedules` is a `HashMap<String, EpgSchedule>` with no capacity limit. The cache grows proportionally to the number of channels in the XMLTV feed that match `known_channel_ids`. While the `known_channel_ids` filter in `parse_xmltv` bounds this to channels in the loaded M3U playlist, an extremely large playlist (thousands of channels each with hundreds of programmes) could consume significant memory.
+- **Risk**: Gradual memory growth. Low severity because the filter mechanism already bounds the data, but there is no hard upper limit.
+- **Recommendation**: Consider adding a maximum programme count per channel (e.g., 200 programmes, covering ~1 week of hourly programming). Prune programmes with `end` times in the past during cache updates.
+
+### E5: LOW -- Unvalidated icon_url from XMLTV Data
+
+- **File**: `backend/src/services/epg_parser.rs:99-107`
+- **Issue**: The `icon src` attribute from XMLTV programme elements is stored directly in `EpgProgram.icon_url` without URL validation. This URL is returned to the frontend via the API and could contain `javascript:`, `data:`, or `file://` URIs. This is the same class of issue as existing finding F4 (Unvalidated stream_url/logo_url).
+- **Risk**: If the frontend renders `icon_url` as an image `src` or link `href`, it could be exploited for XSS or tracking. Currently `EpgOverlay.tsx` does not render `icon_url`, so the risk is latent but would surface if the UI is extended.
+- **Recommendation**: Apply the same `sanitizeUrl()` protocol validation (allow only `http:` and `https:`) recommended in F4. Apply at the parser level before storing in the model.
+
+### E6: LOW -- channel_id Reflected in Error Response JSON
+
+- **File**: `backend/src/routes/epg.rs:31-33`
+- **Issue**: The error response includes `"channel_id": channel_id` where `channel_id` is user-controlled input from the URL path. While JSON encoding prevents XSS in typical API consumers, if this response is ever rendered in a web page without proper escaping, the reflected value could be exploited. Additionally, reflecting arbitrary user input in error messages can aid enumeration.
+- **Risk**: Low. Axum's JSON serialization via serde_json safely escapes special characters. React's JSX auto-escaping would also protect the frontend. The risk is theoretical.
+- **Recommendation**: This is acceptable for development. In production, consider removing the reflection or truncating `channel_id` to a maximum length (e.g., 128 characters) to prevent abuse as a data exfiltration channel.
+
+### E7: INFO -- unwrap_or_default on Attribute Parsing Silently Drops Errors
+
+- **File**: `backend/src/services/epg_parser.rs:78-81`
+- **Issue**: `std::str::from_utf8(attr_result.key.as_ref()).unwrap_or_default()` silently converts invalid UTF-8 attribute names and values to empty strings. This means malformed XML with invalid encoding will produce partial/incorrect results without any error indication.
+- **Risk**: No security impact. Data quality issue only -- malformed XMLTV feeds could produce incomplete schedules with no logged warning.
+- **Recommendation**: Consider logging a warning when UTF-8 conversion fails, so operators can diagnose bad EPG sources.
+
+### E8: INFO -- CORS Allows All Origins (Existing)
+
+- **File**: `backend/src/main.rs:80-83`
+- **Issue**: The CORS middleware uses `Any` for origin, methods, and headers. This is noted as intentional for development. The EPG endpoints inherit this permissive policy.
+- **Risk**: In production, any website could call the EPG API and extract schedule data. Since EPG data is not sensitive, the risk is informational, but it should be tightened before deployment.
+- **Recommendation**: Restrict CORS origins to the frontend domain in production configuration.
+
+## Approved (EPG)
+
+The following aspects of the EPG implementation were reviewed and found to be satisfactory:
+
+1. **XML Bomb / Billion Laughs Prevention**: `quick-xml` 0.36 does NOT expand DTD entities by default. The `Reader::from_str` constructor does not enable DTD processing, and `quick-xml`'s default configuration has `expand_empty_elements = false` and does not resolve external entities. The 50 MB `MAX_XML_SIZE` check in `epg_parser.rs:35-37` provides an additional layer of defense. XXE attacks are effectively mitigated.
+
+2. **No External Entity (XXE) Injection**: `quick-xml` does not support loading external entities (no network or filesystem access during parsing). This is safe by design.
+
+3. **Frontend XSS Protection**: All EPG data (title, description, category) is rendered via JSX curly-brace expressions in `EpgOverlay.tsx`, which React auto-escapes. There is no use of `dangerouslySetInnerHTML` or `innerHTML` anywhere in the EPG components. The search found zero matches across the entire `web/src/` directory.
+
+4. **Input Validation on channel_id**: Axum's `Path<String>` extractor URL-decodes the path segment. The value is used only as a HashMap key lookup via `cache.get_schedule(&channel_id)`. There is no path traversal risk because no filesystem operations are performed with this value.
+
+5. **EPG Parser Filtering**: The `known_channel_ids` filter in `parse_xmltv` ensures only channels present in the loaded M3U playlist are processed. This naturally bounds the cache size and prevents an attacker-controlled XMLTV source from injecting arbitrary channel data.
+
+6. **Cache Staleness Check**: The TTL-based cache invalidation in `EpgCache::is_stale()` is correctly implemented using `Instant::elapsed()`, which is monotonic and not subject to clock skew.
+
+7. **Background Fetcher Safety**: The `start_epg_fetcher` spawns a single tokio task with proper error handling (`tracing::error!` on failure, continues loop). Fetch errors do not crash the backend.
+
+8. **Frontend `encodeURIComponent` on channel_id**: The `useEpg` hook at `useEpg.ts:29` correctly uses `encodeURIComponent(id)` when constructing the API URL, preventing injection into the URL path.
+
+9. **Type Safety**: All EPG types use strict TypeScript types with no `any`. The `EpgProgram` fields are properly typed as `string` and optional fields use `?` syntax.
+
+10. **No Sensitive Data Exposure**: EPG data is public programme schedule information. No authentication tokens, private keys, or user-specific data flows through the EPG pipeline.

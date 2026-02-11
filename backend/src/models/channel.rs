@@ -15,4 +15,7 @@ pub struct Channel {
     pub stream_url: String,
     /// Whether the channel is currently reachable.
     pub is_live: bool,
+    /// Optional EPG identifier used to match against XMLTV programme data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tvg_id: Option<String>,
 }

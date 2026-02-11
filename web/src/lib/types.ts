@@ -5,6 +5,29 @@ export type Channel = {
   logo_url: string | null;
   stream_url: string;
   is_live: boolean;
+  tvg_id?: string;
+};
+
+export type EpgProgram = {
+  id: string;
+  channel_id: string;
+  title: string;
+  description?: string;
+  start: string;
+  end: string;
+  category?: string;
+  icon_url?: string;
+};
+
+export type EpgSchedule = {
+  channel_id: string;
+  programs: EpgProgram[];
+};
+
+export type EpgNowNext = {
+  channel_id: string;
+  now: EpgProgram | null;
+  next: EpgProgram | null;
 };
 
 export type Playlist = {
