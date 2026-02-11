@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { fetchPlaylist } from "@/lib/api";
+import { fetchPlaylist, updatePlaylist } from "@/lib/api";
 import type { Playlist, Channel } from "@/lib/types";
 
 type UsePlaylistReturn = {
@@ -15,6 +15,7 @@ type UsePlaylistReturn = {
   setLiveOnly: (value: boolean) => void;
   refreshPlaylist: () => Promise<void>;
   setPlaylistData: (data: Playlist) => void;
+  removeChannels: (ids: Set<string>) => Promise<void>;
 };
 
 export function usePlaylist(): UsePlaylistReturn {
@@ -69,6 +70,19 @@ export function usePlaylist(): UsePlaylistReturn {
     setLoading(false);
   }, []);
 
+  const removeChannels = useCallback(
+    async (ids: Set<string>): Promise<void> => {
+      if (!playlist) return;
+      const updated: Playlist = {
+        ...playlist,
+        channels: playlist.channels.filter((ch) => !ids.has(ch.id)),
+      };
+      await updatePlaylist(updated);
+      setPlaylist(updated);
+    },
+    [playlist]
+  );
+
   return {
     playlist,
     filteredChannels,
@@ -80,5 +94,6 @@ export function usePlaylist(): UsePlaylistReturn {
     setLiveOnly,
     refreshPlaylist: loadPlaylist,
     setPlaylistData,
+    removeChannels,
   };
 }

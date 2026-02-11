@@ -10,6 +10,7 @@ import { SearchBar } from "@/components/SearchBar";
 import { UploadButton } from "@/components/UploadButton";
 import { SaveToChainButton } from "@/components/SaveToChainButton";
 import { LoadFromChainPrompt } from "@/components/LoadFromChainPrompt";
+import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
 import type { Channel, ChainPlaylistResponse } from "@/lib/types";
 
 export default function Home(): JSX.Element {
@@ -24,6 +25,7 @@ export default function Home(): JSX.Element {
     setLiveOnly,
     refreshPlaylist,
     setPlaylistData,
+    removeChannels,
   } = usePlaylist();
 
   const { selectedAccount: account } = useWalletContext();
@@ -34,6 +36,36 @@ export default function Home(): JSX.Element {
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
 
   const [chainPrompt, setChainPrompt] = useState<ChainPlaylistResponse | null>(null);
+
+  const [editMode, setEditMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  function handleToggleEditMode(): void {
+    if (editMode) {
+      setSelectedForDelete(new Set());
+    }
+    setEditMode(!editMode);
+  }
+
+  function handleToggleSelect(id: string): void {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function handleConfirmDelete(): Promise<void> {
+    await removeChannels(selectedForDelete);
+    setSelectedForDelete(new Set());
+    setEditMode(false);
+    setShowDeleteModal(false);
+  }
 
   const checkChainPlaylist = useCallback(
     async (address: string): Promise<void> => {
@@ -93,9 +125,22 @@ export default function Home(): JSX.Element {
               placeholder="Search channels..."
             />
             <UploadButton onUploadComplete={refreshPlaylist} />
+            {totalChannels > 0 && (
+              <button
+                type="button"
+                onClick={handleToggleEditMode}
+                className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                  editMode
+                    ? "bg-accent/15 text-accent ring-1 ring-accent/30"
+                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]/80"
+                }`}
+              >
+                {editMode ? "Done" : "Edit"}
+              </button>
+            )}
           </div>
 
-          {/* Stats row + live filter + chain save */}
+          {/* Stats row + live filter + delete/chain save */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="font-mono text-xs text-[var(--color-text-tertiary)] tracking-widest uppercase">
@@ -117,12 +162,22 @@ export default function Home(): JSX.Element {
                 </button>
               )}
             </div>
-            {account && playlist && playlist.channels.length > 0 && (
-              <SaveToChainButton
-                address={account.address}
-                source={account.source}
-                playlist={playlist}
-              />
+            {editMode && selectedForDelete.size > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Delete ({selectedForDelete.size})
+              </button>
+            ) : (
+              account && playlist && playlist.channels.length > 0 && (
+                <SaveToChainButton
+                  address={account.address}
+                  source={account.source}
+                  playlist={playlist}
+                />
+              )
             )}
           </div>
         </div>
@@ -133,6 +188,9 @@ export default function Home(): JSX.Element {
             channels={filteredChannels}
             onSelect={setSelectedChannel}
             selectedId={selectedChannel?.id}
+            editMode={editMode}
+            selectedIds={selectedForDelete}
+            onToggleSelect={handleToggleSelect}
           />
         </div>
       </div>
@@ -153,6 +211,15 @@ export default function Home(): JSX.Element {
           blockNumber={chainPrompt.block_number ?? 0}
           onAccept={handleAcceptChainPlaylist}
           onDismiss={handleDismissChainPrompt}
+        />
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteModal && (
+        <ConfirmDeleteModal
+          count={selectedForDelete.size}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setShowDeleteModal(false)}
         />
       )}
     </div>

@@ -60,6 +60,29 @@ pub async fn upload_playlist(
     Err((StatusCode::BAD_REQUEST, "Missing 'file' field".to_string()))
 }
 
+/// Replaces the in-memory playlist with the provided JSON payload.
+///
+/// Accepts a full `Playlist` object and overwrites the current state.
+/// Triggers an immediate liveness check after the update.
+pub async fn update_playlist(
+    State(state): State<Arc<AppState>>,
+    Json(updated): Json<crate::models::Playlist>,
+) -> impl IntoResponse {
+    let count = updated.channels.len();
+
+    {
+        let mut playlist = state.playlist.write().await;
+        *playlist = updated;
+    }
+
+    state.check_now.notify_one();
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "channels_count": count
+    }))
+}
+
 /// Returns the playlist formatted as an M3U file.
 ///
 /// The response uses `Content-Type: audio/x-mpegurl` so media players

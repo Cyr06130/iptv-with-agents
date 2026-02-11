@@ -10,6 +10,17 @@ export async function fetchPlaylist(): Promise<Playlist> {
   return res.json() as Promise<Playlist>;
 }
 
+export async function updatePlaylist(playlist: Playlist): Promise<void> {
+  const res = await fetch(`${API_URL}/api/playlist`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(playlist),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update playlist: ${res.status}`);
+  }
+}
+
 export async function uploadPlaylist(file: File): Promise<{ status: string; channels_loaded: number }> {
   const form = new FormData();
   form.append("file", file);
