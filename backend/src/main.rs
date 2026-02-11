@@ -11,8 +11,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 use config::Config;
-use models::{AppState, Playlist};
+use models::{AppState, EpgCache, Playlist};
 use services::channel_checker;
+use services::iptv_org::IptvOrgIndex;
 
 /// Entry point for the IPTV backend service.
 ///
@@ -40,10 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source: cfg.m3u_source_url.clone(),
     };
 
+    let epg_cache = EpgCache::new();
+
     let state = Arc::new(AppState {
         playlist: tokio::sync::RwLock::new(playlist),
         config: cfg.clone(),
         check_now: tokio::sync::Notify::new(),
+        epg_cache: tokio::sync::RwLock::new(epg_cache),
+        iptv_org_index: tokio::sync::RwLock::new(IptvOrgIndex::new()),
     });
 
     // Spawn the background channel liveness checker *before* loading the
@@ -64,6 +69,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if cfg.epg_enabled {
+        info!("EPG enabled (on-demand via iptv-org API)");
+    }
+
     // CORS: allow all origins during development.
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -76,6 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/playlist/m3u", get(routes::playlist::get_playlist_m3u))
         .route("/api/playlist/upload", post(routes::playlist::upload_playlist))
         .route("/api/chain/playlist", get(routes::chain::get_chain_playlist))
+        .route("/api/epg/:channel_id", get(routes::epg::get_schedule))
+        .route("/api/epg/:channel_id/now", get(routes::epg::get_now_next))
         .layer(cors)
         .with_state(state);
 

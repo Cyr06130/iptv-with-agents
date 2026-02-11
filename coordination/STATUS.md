@@ -307,3 +307,61 @@ E2E Tests (Playwright):
 - `npm run test` -- 68/68 unit tests PASS
 - `npx playwright test` -- 10/10 E2E tests PASS
 - All security test tasks (TASK-SEC-T1 through TASK-SEC-T5) COMPLETE
+
+## blockchain-dev -- EPG Backend Implementation (COMPLETED 2026-02-11)
+
+### Task: Design EPG data model and API contracts
+
+### Changes made:
+
+1. **backend/src/models/channel.rs** -- Added `tvg_id: Option<String>` field to `Channel` struct with `#[serde(skip_serializing_if)]`.
+
+2. **backend/src/services/m3u_parser.rs** -- Updated `parse_m3u()` to extract `tvg-id` attribute from `#EXTINF` lines and store it in `channel.tvg_id`. Added `parse_extracts_tvg_id` test.
+
+3. **backend/src/models/epg.rs** (NEW) -- EPG data models:
+   - `EpgProgram`: id, channel_id, title, description, start/end (DateTime<Utc>), category, icon_url
+   - `EpgSchedule`: channel_id + sorted Vec<EpgProgram>
+   - `EpgNowNext`: current + next programme response type
+   - `EpgCache`: HashMap-based in-memory cache with TTL, `is_stale()`, `get_schedule()`, `get_now_next()`
+   - 5 unit tests for cache behaviour and now/next lookup
+
+4. **backend/src/services/epg_parser.rs** (NEW) -- XMLTV parser:
+   - `parse_xmltv()`: streaming XML parser using `quick-xml`, filters by known channel IDs
+   - `parse_xmltv_datetime()`: handles `YYYYMMDDHHmmss +HHMM` format with timezone conversion
+   - `EpgParseError` error type with `TooLarge` and `Xml` variants
+   - 50 MB size limit to prevent XML bomb attacks
+   - 8 unit tests covering parsing, filtering, sorting, timezone handling, size limits
+
+5. **backend/src/routes/epg.rs** (NEW) -- EPG API endpoints:
+   - `GET /api/epg/{channel_id}` -- returns today's full schedule for a channel
+   - `GET /api/epg/{channel_id}/now` -- returns current + next programme
+
+6. **backend/src/config.rs** -- Added `epg_source_url`, `epg_ttl_hours`, `epg_refresh_interval_mins` config fields with env vars `EPG_SOURCE_URL`, `EPG_TTL_HOURS`, `EPG_REFRESH_MINS`.
+
+7. **backend/src/models/mod.rs** -- Added `pub mod epg`, re-exported `EpgCache`, added `epg_cache: RwLock<EpgCache>` to `AppState`.
+
+8. **backend/src/main.rs** -- Integrated EPG:
+   - Initialize `EpgCache` with configured TTL
+   - Add `epg_cache` to `AppState`
+   - Register EPG routes (`/api/epg/{channel_id}`, `/api/epg/{channel_id}/now`)
+   - Spawn `start_epg_fetcher` background task (initial fetch + periodic refresh with staleness check)
+   - `fetch_and_load_epg()` collects `tvg_id`s from playlist to filter XMLTV data
+
+9. **backend/src/routes/playlist.rs** -- Updated M3U export to include `tvg-id` attribute.
+
+10. **backend/src/routes/chain.rs** -- Added `tvg_id: None` to on-chain Channel construction.
+
+11. **backend/src/services/mod.rs** -- Added `pub mod epg_parser`.
+
+12. **backend/src/routes/mod.rs** -- Added `pub mod epg`.
+
+13. **backend/Cargo.toml** -- Added `quick-xml = "0.36"` and `chrono = { version = "0.4", features = ["serde"] }`.
+
+### New dependencies:
+- `quick-xml 0.36` -- streaming XML parser for XMLTV data
+- `chrono 0.4` -- datetime handling with timezone support and serde serialization
+
+### Verification:
+- `cargo check -p iptv-backend` -- OK, zero warnings
+- `cargo test -p iptv-backend` -- 30/30 tests pass (15 new EPG tests)
+- `cargo clippy -p iptv-backend -- -D warnings` -- Clean

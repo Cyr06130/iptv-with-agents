@@ -44,6 +44,15 @@ const config: Config = {
       transitionTimingFunction: {
         premium: "cubic-bezier(0.16, 1, 0.3, 1)",
       },
+      keyframes: {
+        slideUp: {
+          from: { opacity: "0", transform: "translateY(20px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        slideUp: "slideUp 300ms ease-out",
+      },
     },
   },
   plugins: [],
