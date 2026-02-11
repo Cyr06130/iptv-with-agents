@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/api/health", get(routes::health::health))
-        .route("/api/playlist", get(routes::playlist::get_playlist))
+        .route("/api/playlist", get(routes::playlist::get_playlist).put(routes::playlist::update_playlist))
         .route("/api/playlist/m3u", get(routes::playlist::get_playlist_m3u))
         .route("/api/playlist/upload", post(routes::playlist::upload_playlist))
         .route("/api/chain/playlist", get(routes::chain::get_chain_playlist))
