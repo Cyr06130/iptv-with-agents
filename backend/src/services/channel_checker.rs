@@ -57,19 +57,31 @@ pub async fn check_all_channels(channels: &mut [crate::models::Channel], timeout
     }
 }
 
-/// Spawn a background tokio task that periodically re-checks all channels.
+/// Spawn a background tokio task that checks all channels for liveness.
 ///
-/// The task runs indefinitely, sleeping for `interval` between each full
-/// check cycle. Channel liveness results are written back to the shared
-/// [`AppState`] playlist.
+/// The task runs a check cycle whenever it is explicitly notified via
+/// [`AppState::check_now`] **or** when `interval` elapses — whichever
+/// comes first. This means a fresh playlist triggers an immediate check
+/// while the periodic schedule still fires as a safety net.
 pub fn start_background_checker(state: Arc<AppState>, interval: Duration, timeout: Duration) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(interval).await;
-
-            info!("Starting periodic channel liveness check");
+            // Wait for either an explicit signal or the periodic timer.
+            tokio::select! {
+                () = state.check_now.notified() => {
+                    info!("Liveness check triggered by playlist load");
+                }
+                () = tokio::time::sleep(interval) => {
+                    info!("Starting periodic channel liveness check");
+                }
+            }
 
             let mut playlist = state.playlist.write().await;
+
+            if playlist.channels.is_empty() {
+                continue;
+            }
+
             check_all_channels(&mut playlist.channels, timeout).await;
 
             let live_count = playlist.channels.iter().filter(|c| c.is_live).count();
@@ -139,5 +151,5 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 
 /// Check whether a given year is a leap year.
 fn is_leap_year(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }

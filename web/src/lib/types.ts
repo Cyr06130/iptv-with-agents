@@ -19,3 +19,24 @@ export type UserSettings = {
   lastWatchedChannelId: string | null;
   volume: number;
 };
+
+export type CompactChannel = {
+  n: string;
+  g: string;
+  l: string | null;
+  s: string;
+};
+
+export type OnChainPlaylist = {
+  v: number;
+  n: string;
+  c: CompactChannel[];
+};
+
+export type ChainPlaylistResponse = {
+  found: boolean;
+  playlist?: Playlist;
+  block_number?: number;
+  extrinsic_hash?: string;
+  cid?: string;
+};

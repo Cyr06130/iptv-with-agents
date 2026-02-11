@@ -9,6 +9,8 @@ pub struct Config {
     pub probe_timeout_secs: u64,
     /// Interval in minutes between background liveness checks.
     pub probe_interval_mins: u64,
+    /// Base URL for the Subscan API used for on-chain playlist lookups.
+    pub subscan_api_url: String,
 }
 
 impl Config {
@@ -20,6 +22,7 @@ impl Config {
     /// | `M3U_SOURCE_URL`      | (empty string)                      |
     /// | `PROBE_TIMEOUT_SECS`  | `5`                                 |
     /// | `PROBE_INTERVAL_MINS` | `10`                                |
+    /// | `SUBSCAN_API_URL`     | `https://paseo.api.subscan.io`      |
     pub fn from_env() -> Self {
         let port = std::env::var("BACKEND_PORT")
             .ok()
@@ -38,11 +41,15 @@ impl Config {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(10);
 
+        let subscan_api_url = std::env::var("SUBSCAN_API_URL")
+            .unwrap_or_else(|_| "https://paseo.api.subscan.io".to_string());
+
         Self {
             port,
             m3u_source_url,
             probe_timeout_secs,
             probe_interval_mins,
+            subscan_api_url,
         }
     }
 }
