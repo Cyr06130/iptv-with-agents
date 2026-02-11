@@ -123,6 +123,10 @@ cd web && npm audit              # Check dependency vulnerabilities
 - No CDN or media server (SRS)
 - No Meilisearch (client-side search only)
 
+## Git
+
+- Never add `Co-Authored-By` lines to commit messages. All code is authored solely by the user.
+
 ## Bash Guidelines
 
 - Do not pipe output through `head`, `tail`, `less`, or `more` — causes buffering issues
