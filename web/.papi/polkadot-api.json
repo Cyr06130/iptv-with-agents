@@ -1,0 +1,12 @@
+{
+  "version": 0,
+  "descriptorPath": ".papi/descriptors",
+  "entries": {
+    "bulletinchain": {
+      "wsUrl": "wss://bulletin.dotspark.app",
+      "metadata": ".papi/metadata/bulletinchain.scale",
+      "genesis": "0x606cb02fba39492c072b8f5ad291539775b0c5b1798320661756e6150f40b91c",
+      "codeHash": "0x2a4beab1e9e43fff013377749e1cbf3abc625ca39d6696cb5a3ff41354f96010"
+    }
+  }
+}

@@ -6,7 +6,7 @@ mod services;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{routing::get, Router};
+use axum::{routing::{get, post}, Router};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -42,21 +42,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(AppState {
         playlist: tokio::sync::RwLock::new(playlist),
+        config: cfg.clone(),
+        check_now: tokio::sync::Notify::new(),
     });
 
-    // If a source URL is configured, fetch and parse the M3U on startup.
-    if !cfg.m3u_source_url.is_empty() {
-        if let Err(e) = fetch_and_load_playlist(&cfg.m3u_source_url, &state).await {
-            tracing::error!("Failed to load initial playlist: {e}");
-        }
-    }
-
-    // Spawn the background channel liveness checker.
+    // Spawn the background channel liveness checker *before* loading the
+    // playlist so it is ready to receive the notify signal.
     channel_checker::start_background_checker(
         Arc::clone(&state),
         Duration::from_secs(cfg.probe_interval_mins * 60),
         Duration::from_secs(cfg.probe_timeout_secs),
     );
+
+    // If a source URL is configured, fetch and parse the M3U on startup,
+    // then trigger an immediate liveness check.
+    if !cfg.m3u_source_url.is_empty() {
+        if let Err(e) = fetch_and_load_playlist(&cfg.m3u_source_url, &state).await {
+            tracing::error!("Failed to load initial playlist: {e}");
+        } else {
+            state.check_now.notify_one();
+        }
+    }
 
     // CORS: allow all origins during development.
     let cors = CorsLayer::new()
@@ -68,6 +74,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/health", get(routes::health::health))
         .route("/api/playlist", get(routes::playlist::get_playlist))
         .route("/api/playlist/m3u", get(routes::playlist::get_playlist_m3u))
+        .route("/api/playlist/upload", post(routes::playlist::upload_playlist))
+        .route("/api/chain/playlist", get(routes::chain::get_chain_playlist))
         .layer(cors)
         .with_state(state);
 

@@ -15,41 +15,46 @@ export function VideoPlayer({ src, poster }: VideoPlayerProps): JSX.Element {
     if (!videoRef.current || !src) return;
 
     const video = videoRef.current;
+    let hls: import("hls.js").default | null = null;
 
-    // Check if HLS is supported
-    if (src.endsWith(".m3u8")) {
-      // Dynamic import for HLS.js
-      import("hls.js").then(({ default: Hls }) => {
-        if (Hls.isSupported()) {
-          const hls = new Hls();
-          hls.loadSource(src);
-          hls.attachMedia(video);
+    import("hls.js").then(({ default: Hls }) => {
+      if (!videoRef.current) return;
 
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            video.play();
-            setIsPlaying(true);
-          });
+      if (Hls.isSupported()) {
+        hls = new Hls();
+        hls.loadSource(src);
+        hls.attachMedia(video);
 
-          return () => {
-            hls.destroy();
-          };
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          // Native HLS support (Safari)
-          video.src = src;
-          video.addEventListener("loadedmetadata", () => {
-            video.play();
-            setIsPlaying(true);
-          });
-        }
-      });
-    } else {
-      // Regular video source
-      video.src = src;
-      video.play();
-      setIsPlaying(true);
-    }
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => {});
+          setIsPlaying(true);
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            hls?.destroy();
+            hls = null;
+            video.src = src;
+            video.play().catch(() => {});
+          }
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = src;
+        video.addEventListener("loadedmetadata", () => {
+          video.play().catch(() => {});
+          setIsPlaying(true);
+        });
+      } else {
+        video.src = src;
+        video.play().catch(() => {});
+        setIsPlaying(true);
+      }
+    });
 
     return () => {
+      if (hls) {
+        hls.destroy();
+      }
       video.pause();
       video.src = "";
     };
@@ -80,10 +85,10 @@ export function VideoPlayer({ src, poster }: VideoPlayerProps): JSX.Element {
 
   if (!src) {
     return (
-      <div className="w-full h-full bg-surface rounded-lg flex items-center justify-center">
-        <div className="text-center text-text-muted">
+      <div className="w-full h-full bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] flex items-center justify-center">
+        <div className="text-center text-[var(--color-text-tertiary)]">
           <svg
-            className="w-16 h-16 mx-auto mb-4"
+            className="w-16 h-16 mx-auto mb-4 opacity-40"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -95,14 +100,14 @@ export function VideoPlayer({ src, poster }: VideoPlayerProps): JSX.Element {
               d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
             />
           </svg>
-          <p className="text-lg">Select a channel to start streaming</p>
+          <p className="font-serif text-lg text-[var(--color-text-secondary)]">Select a channel to start streaming</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full h-full bg-black rounded-lg overflow-hidden">
+    <div className="w-full h-full bg-black rounded-xl overflow-hidden">
       <video
         ref={videoRef}
         controls

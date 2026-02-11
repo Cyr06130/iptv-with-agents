@@ -1,7 +1,8 @@
 export const typography = {
   fontFamily: {
-    sans: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    mono: "'JetBrains Mono', 'Fira Code', monospace",
+    serif: "'DM Serif Display', Georgia, serif",
+    sans: "'DM Sans', system-ui, sans-serif",
+    mono: "'JetBrains Mono', 'Courier New', monospace",
   },
   fontSize: {
     xs: "0.75rem",
@@ -11,6 +12,8 @@ export const typography = {
     xl: "1.25rem",
     "2xl": "1.5rem",
     "3xl": "2rem",
+    "4xl": "2.5rem",
+    "5xl": "3rem",
   },
   fontWeight: {
     normal: "400",
