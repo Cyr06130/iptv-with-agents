@@ -17,6 +17,7 @@
     "@noble/hashes": "^1.7.2",
     "@novasamatech/host-papp": "^0.5.4",
     "@novasamatech/host-papp-react-ui": "^0.5.4",
+    "@novasamatech/product-sdk": "0.5.5",
     "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-api/substrate-bindings": "^0.17.0",
     "@polkadot-labs/hdkd": "^0.0.25",

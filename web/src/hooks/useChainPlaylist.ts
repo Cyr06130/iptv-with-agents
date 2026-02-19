@@ -11,7 +11,7 @@ type UseChainPlaylistReturn = {
   chainStatus: ChainStatus;
   chainError: string | null;
   loadError: string | null;
-  saveToChain: (address: string, source: string, playlist: Playlist, signer?: PolkadotSigner) => Promise<void>;
+  saveToChain: (address: string, source: string, playlist: Playlist, publicKey?: Uint8Array, signer?: PolkadotSigner) => Promise<void>;
   loadFromChain: (address: string) => Promise<ChainPlaylistResponse | null>;
 };
 
@@ -21,7 +21,7 @@ export function useChainPlaylist(): UseChainPlaylistReturn {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const saveToChain = useCallback(
-    async (address: string, source: string, playlist: Playlist, signer?: PolkadotSigner): Promise<void> => {
+    async (address: string, source: string, playlist: Playlist, publicKey?: Uint8Array, signer?: PolkadotSigner): Promise<void> => {
       try {
         setChainError(null);
         setChainStatus("submitting");
@@ -30,6 +30,7 @@ export function useChainPlaylist(): UseChainPlaylistReturn {
           source,
           playlist.name,
           playlist.channels,
+          publicKey,
           signer
         );
         setChainStatus("confirmed");

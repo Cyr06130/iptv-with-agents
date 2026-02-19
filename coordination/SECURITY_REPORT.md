@@ -285,3 +285,265 @@ The following aspects of the EPG implementation were reviewed and found to be sa
 9. **Type Safety**: All EPG types use strict TypeScript types with no `any`. The `EpgProgram` fields are properly typed as `string` and optional fields use `?` syntax.
 
 10. **No Sensitive Data Exposure**: EPG data is public programme schedule information. No authentication tokens, private keys, or user-specific data flows through the EPG pipeline.
+
+---
+
+# Host Auth Integration Security Review
+
+## Audit Scope
+
+Host authentication integration for Polkadot Desktop (Electron webview) environment.
+Files reviewed:
+
+- `web/src/hooks/useHostAccount.ts` (new file)
+- `web/src/contexts/UnifiedAccountContext.tsx` (modified)
+- `web/src/components/ConnectWallet.tsx` (modified)
+- `web/src/lib/chain.ts` (modified)
+- `web/node_modules/@novasamatech/product-sdk/dist/accounts.js` (SDK internals)
+- `web/node_modules/@novasamatech/product-sdk/dist/sandboxTransport.js` (SDK internals)
+
+## Host Auth Findings Summary
+
+| ID  | Severity | Title                                                    | Status |
+|-----|----------|----------------------------------------------------------|--------|
+| H1  | MEDIUM   | isHostedEnvironment() iframe check is spoofable          | Open   |
+| H2  | LOW      | postMessage targetOrigin is wildcard ('*')               | Note   |
+| H3  | LOW      | getHostSigner creates new provider per call              | Open   |
+| H4  | INFO     | publicKey stored in React state / UnifiedAccount         | OK     |
+| H5  | INFO     | AccountId().enc() may throw on invalid publicKey         | OK     |
+
+## Host Auth Findings Detail
+
+### H1: MEDIUM -- isHostedEnvironment() iframe check is spoofable
+
+- **File**: `web/src/hooks/useHostAccount.ts:24-27`
+- **Code**: `return window.__HOST_WEBVIEW_MARK__ === true || window !== window.top;`
+- **Issue**: The `isHostedEnvironment()` function uses two detection signals: (1) a global
+  `window.__HOST_WEBVIEW_MARK__` boolean set by the Electron webview preload script, and
+  (2) an iframe check (`window !== window.top`). The iframe check means that ANY website
+  that embeds this IPTV app in an iframe will be detected as a "hosted" environment. This
+  could cause the app to attempt host API calls to a non-existent `__HOST_API_PORT__`, which
+  will time out harmlessly (the SDK polls for 20 seconds then throws). However, this also
+  means the app skips showing the normal "Sign in" / "Connect Wallet" UI if `isConnected`
+  is somehow true.
+
+  More importantly, the `__HOST_WEBVIEW_MARK__` global can be set by any JavaScript running
+  in the same context before the app loads. In a legitimate Polkadot Desktop environment,
+  the Electron preload script sets this via `contextBridge` or direct injection. But in a
+  browser context, a malicious browser extension or injected script could set
+  `window.__HOST_WEBVIEW_MARK__ = true` to trick the app into thinking it is hosted.
+
+  **Practical risk**: LOW. The actual signing still goes through the SDK's `sandboxTransport`
+  which communicates via `MessagePort` (`__HOST_API_PORT__`). If no real host is present,
+  `getWebviewPort()` will poll 200 times (20 seconds) then throw an error. The attacker
+  cannot intercept signing requests unless they also control the MessagePort, which requires
+  preload script access (Electron privilege). So the detection spoofing alone does not enable
+  unauthorized signing.
+
+  **However**, spoofing `isHostedEnvironment()` to `true` does change the signer selection
+  in `chain.ts:321-322`:
+  ```
+  const resolvedSigner = signer
+    ?? (hosted && publicKey ? getHostSigner(publicKey) : await getAliceSigner());
+  ```
+  If `hosted` is true and `publicKey` is provided, the code will use `getHostSigner()` which
+  will fail to communicate with a non-existent host. This is a denial-of-service vector for
+  playlist saving, not a key compromise vector.
+
+- **Recommendation**: This is an acceptable design given the SDK's architecture. The SDK
+  itself uses the same detection pattern (`sandboxTransport.js:19-25`). The real security
+  boundary is the MessagePort transport, not the boolean flag. Consider documenting that
+  `isHostedEnvironment()` is a hint, not a security gate. No code change required.
+
+### H2: LOW -- postMessage targetOrigin is wildcard ('*')
+
+- **File**: `web/node_modules/@novasamatech/product-sdk/dist/sandboxTransport.js:75`
+- **Code**: `getParentWindow().postMessage(message, '*', [message.buffer]);`
+- **Issue**: In iframe mode, the SDK posts messages to the parent window using `'*'` as
+  the target origin. This means any parent origin can receive the message. In a legitimate
+  Polkadot Desktop setup this is acceptable because the host is trusted. But if the app is
+  embedded in a malicious iframe parent, the parent could receive the raw SCALE-encoded
+  signing payloads.
+
+  The SDK also validates incoming messages: `isValidIframeMessage` checks
+  `event.source === sourceEnv` (must come from the known parent window) and
+  `event.data.constructor.name === 'Uint8Array'`. This provides some protection against
+  message injection from sibling frames.
+
+  For the webview path, messages go through `MessagePort` which is a point-to-point channel
+  and does not suffer from this issue.
+
+- **Risk**: This is an upstream SDK design decision, not a bug in the IPTV app. The IPTV
+  app has no control over the SDK's postMessage target origin. In practice, the risk is
+  limited because: (a) in the webview path, MessagePort is used instead; (b) in the iframe
+  path, the parent is expected to be the trusted Polkadot Desktop renderer.
+- **Recommendation**: No action needed from the IPTV app. If this is a concern, it should
+  be raised upstream with the `@novasamatech/product-sdk` maintainers.
+
+### H3: LOW -- getHostSigner creates new provider per call
+
+- **File**: `web/src/hooks/useHostAccount.ts:82-89`
+- **Code**:
+  ```typescript
+  export function getHostSigner(publicKey: Uint8Array): PolkadotSigner {
+    const provider = createAccountsProvider();
+    return provider.getNonProductAccountSigner({
+      dotNsIdentifier: "",
+      derivationIndex: 0,
+      publicKey,
+    });
+  }
+  ```
+- **Issue**: Each call to `getHostSigner()` creates a new `createAccountsProvider()` instance
+  which internally creates a new `createHostApi(transport)` instance. While the `transport`
+  is a module-level singleton (`sandboxTransport`), the provider and hostApi layers are
+  recreated each time. In `chain.ts:321-322`, `getHostSigner` is called once per
+  `submitPlaylistToChain` invocation, but the returned signer is used for two transactions
+  (store + remark), so it is reused within a single save operation. This is not a security
+  vulnerability, but unnecessary resource allocation.
+
+- **Recommendation**: Consider caching the provider at module scope. Low priority.
+
+### H4: INFO -- publicKey stored in React state and UnifiedAccount
+
+- **File**: `web/src/contexts/UnifiedAccountContext.tsx:25`, `web/src/hooks/useHostAccount.ts:51-56`
+- **Issue**: The raw `publicKey` (Uint8Array, 32 bytes) from the host is stored in React
+  state and passed through the `UnifiedAccount` type. This is a PUBLIC key, not a private
+  key. It is equivalent to the information available in the SS58 address and carries no
+  additional security risk. The public key is needed to construct the signer for host-mode
+  signing via `getHostSigner(publicKey)`.
+
+- **Verdict**: SAFE. Public keys are not sensitive. No private key material crosses the
+  webview boundary. The private key remains in the host process (Polkadot Desktop) and
+  signing is delegated via the `signPayload` host API call, which triggers the host's
+  native approval modal.
+
+### H5: INFO -- AccountId().enc() may throw on invalid publicKey
+
+- **File**: `web/src/hooks/useHostAccount.ts:51`
+- **Code**: `const address = AccountId().enc(raw.publicKey);`
+- **Issue**: If the host returns a malformed publicKey (wrong length, not 32 bytes), the
+  `AccountId().enc()` call will throw. The error is not caught within the `.map()` callback,
+  which would cause the entire `getNonProductAccounts` promise chain to reject. The `.catch()`
+  at line 63-65 handles this by setting accounts to an empty array, so the app degrades
+  gracefully.
+
+- **Verdict**: OK. The error handling is adequate. The catch-all `.catch()` prevents the
+  error from propagating and the user sees no accounts (correct behavior for invalid data).
+
+## Approved (Host Auth)
+
+The following aspects of the host auth integration were reviewed and found to be satisfactory:
+
+1. **No private keys cross the webview boundary.** The SDK's `getNonProductAccountSigner`
+   (in `accounts.js:114-170`) delegates all signing to `hostApi.signPayload()` which sends
+   the unsigned payload over the MessagePort/postMessage transport to the host process. The
+   host shows a native approval modal before signing. The IPTV app never has access to the
+   private key.
+
+2. **No auto-signing without user consent.** Every `signPayload` call goes through the
+   SDK transport to the host, which presents a confirmation modal. There is no mechanism in
+   the SDK to bypass this approval flow. The IPTV app calls `signSubmitAndWatch(resolvedSigner)`
+   which triggers the host signer, which in turn calls `hostApi.signPayload` -- always
+   requiring user approval on the host side.
+
+3. **Disconnect no-op for host accounts is correct.** In `UnifiedAccountContext.tsx:177-178`,
+   `disconnect()` returns early when `selectedAccount?.source === "host"`. This is correct
+   because host accounts are managed by the host application (Polkadot Desktop), not by the
+   embedded web app. The web app cannot and should not disconnect the user from their host
+   wallet. The "Disconnect All" button is also correctly hidden in the UI when `authSource`
+   is `"host"` (`ConnectWallet.tsx:198`).
+
+4. **Error handling does not leak sensitive info.** Error paths in `useHostAccount.ts` use
+   generic fallbacks: `.catch(() => setAccounts([]))` (line 63-65). The `chain.ts` error
+   messages like "TransactionStorage.store failed on-chain" are generic and do not expose
+   internal state. The `useChainPlaylist.ts` extracts only `err.message` for display.
+
+5. **localStorage usage is safe.** The `SELECTED_ACCOUNT_KEY` stores only the SS58 address
+   (a public identifier). No private keys, session tokens, or signing material is stored in
+   localStorage. The stored address is used only for re-selecting the previously chosen
+   account on page reload.
+
+6. **Import chains are clean -- no circular dependencies.** The dependency graph is:
+   - `useHostAccount.ts` imports from `@novasamatech/product-sdk`, `@polkadot-api/substrate-bindings`, `polkadot-api`, `react`
+   - `UnifiedAccountContext.tsx` imports from `useHostAccount.ts` (hooks only)
+   - `chain.ts` imports from `useHostAccount.ts` (pure functions only: `isHostedEnvironment`, `getHostSigner`)
+   - `ConnectWallet.tsx` imports from `UnifiedAccountContext.tsx`
+   - No circular imports exist between these files.
+
+7. **Host auth priority ordering is correct.** The `authSource` priority in
+   `UnifiedAccountContext.tsx:124-129` is host > papp > extension. The account merge order
+   (lines 97-121) is host first, then papp, then extension, with address deduplication.
+   This ensures host accounts always take precedence when running in Polkadot Desktop.
+
+8. **Signer resolution fallback chain is safe.** In `chain.ts:320-322`:
+   ```
+   const resolvedSigner = signer ?? (hosted && publicKey ? getHostSigner(publicKey) : await getAliceSigner());
+   ```
+   The fallback order is: explicit signer > host signer (when hosted AND publicKey exists) >
+   Alice dev key (when USE_DEV_KEY is true). The `&&` guard on `publicKey` prevents creating
+   a host signer without a valid public key. If neither path works, `getAliceSigner()` throws
+   when `USE_DEV_KEY` is false, which is the correct behavior for production.
+
+9. **ConnectWallet UI correctly handles hosted state.** When `isHosted && isConnected`
+   (`ConnectWallet.tsx:80`), the UI shows a static account display with no authentication
+   actions (no "Sign in", no "Connect Wallet", no "Disconnect"). This is correct because
+   the host manages the account lifecycle.
+
+10. **Host signing path correctly skips Sudo wrapper.** In `chain.ts:340-356`, when hosted
+    with a publicKey, `TransactionStorage.store()` is submitted directly without the
+    `Sudo.sudo()` wrapper. This is the correct behavior: host users sign with their own key
+    and do not need (and should not use) sudo privileges. The dev path retains the Sudo
+    wrapper for Alice-based testing.
+
+## Addendum: publicKey Propagation Chain Review
+
+Additional files reviewed for publicKey propagation:
+
+- `web/src/hooks/useChainPlaylist.ts` (modified -- added `publicKey?: Uint8Array` parameter)
+- `web/src/components/SaveToChainButton.tsx` (modified -- accepts and forwards `publicKey` prop)
+- `web/src/app/page.tsx` (modified -- passes `account.publicKey` to SaveToChainButton)
+
+### publicKey Data Flow
+
+```
+page.tsx:190    account.publicKey  (from UnifiedAccount)
+    |
+    v
+SaveToChainButton.tsx:34    publicKey  (prop, passed through)
+    |
+    v
+useChainPlaylist.ts:33      publicKey  (forwarded to submitPlaylistToChain)
+    |
+    v
+chain.ts:303                publicKey  (used to resolve signer)
+    |
+    v
+useHostAccount.ts:83        getHostSigner(publicKey)  (creates SDK signer)
+```
+
+### Findings
+
+**No additional security issues found.** The publicKey propagation is a clean passthrough:
+
+1. **No mutation or side effects along the chain.** Each layer passes the `Uint8Array`
+   reference without modification. No cloning, encoding, or transformation occurs between
+   `page.tsx` and the final `getHostSigner()` call.
+
+2. **Optional parameter handling is correct.** All layers declare `publicKey?: Uint8Array`
+   (optional). When `publicKey` is `undefined` (non-host accounts), it propagates as
+   `undefined` through the chain, and `chain.ts:321` correctly falls through to the Alice
+   dev key path via the `hosted && publicKey` guard.
+
+3. **SaveToChainButton does not expose publicKey in the DOM.** The component uses `publicKey`
+   only as a passthrough to `saveToChain()`. It is never rendered, logged, or included in
+   error messages displayed to the user.
+
+4. **page.tsx accesses `account.publicKey` safely.** At line 190, `account.publicKey` is
+   accessed from the `UnifiedAccount` type which declares it as `publicKey?: Uint8Array`.
+   For extension and papp accounts, this field is `undefined`, which correctly disables
+   host signing in the downstream chain.
+
+5. **Error display in SaveToChainButton is safe.** The `chainError` string at line 54 comes
+   from `useChainPlaylist.ts:38` which extracts `err.message` or uses a generic fallback.
+   No publicKey or signing details are included in user-facing error text.

@@ -11,17 +11,19 @@ let unifiedAccountValue = {
   accounts: [] as Array<{
     address: string;
     name?: string;
-    source: "papp" | "extension";
+    source: "host" | "papp" | "extension";
     wallet?: { name: string };
+    publicKey?: Uint8Array;
   }>,
   selectedAccount: null as {
     address: string;
     name?: string;
-    source: "papp" | "extension";
+    source: "host" | "papp" | "extension";
     wallet?: { name: string };
+    publicKey?: Uint8Array;
   } | null,
   setSelectedAccount: mockSetSelectedAccount,
-  authSource: null as "papp" | "extension" | null,
+  authSource: null as "host" | "papp" | "extension" | null,
   pappSession: null as unknown,
   disconnect: mockDisconnect,
   isConnected: false,
@@ -40,6 +42,7 @@ vi.mock("@novasamatech/host-papp-react-ui", () => ({
     attestationStatus: { step: "idle" },
     abortAuthentication: vi.fn(),
   }),
+  useSessionIdentity: () => [null],
 }));
 
 vi.mock("@reactive-dot/react", () => ({
@@ -170,5 +173,50 @@ describe("ConnectWallet", () => {
     fireEvent.click(screen.getByText("Alice"));
     fireEvent.click(screen.getByText("Disconnect All"));
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows account display without sign-in UI when hosted", () => {
+    unifiedAccountValue = {
+      ...unifiedAccountValue,
+      accounts: [
+        { address: "5HostAccount123456789012345678901234567890", name: "My Desktop Account", source: "host", publicKey: new Uint8Array(32) },
+      ],
+      selectedAccount: {
+        address: "5HostAccount123456789012345678901234567890",
+        name: "My Desktop Account",
+        source: "host",
+        publicKey: new Uint8Array(32),
+      },
+      isConnected: true,
+      authSource: "host",
+    };
+
+    render(<ConnectWallet />);
+    // Account name should be displayed
+    expect(screen.getByText("My Desktop Account")).toBeInTheDocument();
+    // Sign-in button should NOT be present
+    expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
+    // Wallet extension button should NOT be present
+    expect(screen.queryByTitle("Connect with wallet extension")).not.toBeInTheDocument();
+  });
+
+  it("does not show Disconnect button for host accounts", () => {
+    unifiedAccountValue = {
+      ...unifiedAccountValue,
+      accounts: [
+        { address: "5HostAccount123456789012345678901234567890", name: "My Desktop Account", source: "host" },
+      ],
+      selectedAccount: {
+        address: "5HostAccount123456789012345678901234567890",
+        name: "My Desktop Account",
+        source: "host",
+      },
+      isConnected: true,
+      authSource: "host",
+    };
+
+    render(<ConnectWallet />);
+    // Disconnect All button should NOT be present
+    expect(screen.queryByText("Disconnect All")).not.toBeInTheDocument();
   });
 });

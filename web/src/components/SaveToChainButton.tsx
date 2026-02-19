@@ -7,6 +7,9 @@ type SaveToChainButtonProps = {
   address: string;
   source: string;
   playlist: Playlist;
+  /** Raw public key for host signing (from HostAccount). When provided and running
+   *  in a hosted environment, the user signs directly without Sudo wrapper. */
+  publicKey?: Uint8Array;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -21,14 +24,14 @@ export function SaveToChainButton({
   address,
   source,
   playlist,
+  publicKey,
 }: SaveToChainButtonProps): JSX.Element {
   const { chainStatus, chainError, saveToChain } = useChainPlaylist();
 
   const isDisabled = chainStatus === "signing" || chainStatus === "submitting";
 
   async function handleClick(): Promise<void> {
-    // TODO: Convert PJS wallet signer to PAPI PolkadotSigner for production use
-    await saveToChain(address, source, playlist, undefined);
+    await saveToChain(address, source, playlist, publicKey);
   }
 
   return (

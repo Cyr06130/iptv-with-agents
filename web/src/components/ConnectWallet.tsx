@@ -39,6 +39,7 @@ function ConnectWalletInner(): JSX.Element {
     accounts,
     selectedAccount,
     setSelectedAccount,
+    authSource,
     disconnect,
     isConnected,
     pappSession,
@@ -65,12 +66,29 @@ function ConnectWalletInner(): JSX.Element {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showAccountMenu]);
 
+  const isHosted = authSource === "host";
+
   const displayName =
     (selectedAccount?.source === "papp"
       ? pappIdentity?.fullUsername || pappIdentity?.liteUsername
       : null) ||
     selectedAccount?.name ||
     truncateAddress(selectedAccount?.address ?? "");
+
+  // ── Host: account is already available, show it with no auth actions ──
+
+  if (isHosted && isConnected) {
+    return (
+      <div className="flex items-center gap-2 pl-2.5 pr-3.5 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <span className="w-7 h-7 rounded-lg bg-grey-900 dark:bg-grey-100 flex items-center justify-center shrink-0">
+          <UserIcon />
+        </span>
+        <span className="text-sm font-medium text-[var(--color-text-primary)] max-w-[140px] truncate hidden sm:inline">
+          {displayName}
+        </span>
+      </div>
+    );
+  }
 
   // ── Disconnected state ─────────────────────────────────────────────
 
@@ -127,7 +145,7 @@ function ConnectWalletInner(): JSX.Element {
     );
   }
 
-  // ── Connected state ────────────────────────────────────────────────
+  // ── Connected state (papp / extension) ─────────────────────────────
 
   return (
     <div className="relative">
@@ -176,19 +194,21 @@ function ConnectWalletInner(): JSX.Element {
             ))}
           </div>
 
-          {/* Footer */}
-          <div className="px-3 py-3 border-t border-[var(--color-border)]">
-            <button
-              onClick={async () => {
-                await disconnect();
-                setShowAccountMenu(false);
-              }}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] transition-colors duration-200"
-            >
-              <LogoutIcon />
-              Disconnect All
-            </button>
-          </div>
+          {/* Footer — hidden for host accounts (disconnect is managed by the host) */}
+          {authSource !== "host" && (
+            <div className="px-3 py-3 border-t border-[var(--color-border)]">
+              <button
+                onClick={async () => {
+                  await disconnect();
+                  setShowAccountMenu(false);
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] transition-colors duration-200"
+              >
+                <LogoutIcon />
+                Disconnect All
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -235,7 +255,11 @@ function AccountItem({
           {displayName}
         </span>
         <span className="block text-xs opacity-60 mt-0.5">
-          {account.source === "papp" ? "Polkadot App" : account.wallet?.name ?? "Extension"}
+          {account.source === "host"
+            ? "Polkadot Desktop"
+            : account.source === "papp"
+              ? "Polkadot App"
+              : account.wallet?.name ?? "Extension"}
           {" \u00B7 "}
           {truncateAddress(account.address)}
         </span>

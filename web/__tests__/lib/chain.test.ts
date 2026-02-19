@@ -67,6 +67,14 @@ vi.mock("@polkadot-api/descriptors", () => ({
   bulletinchain: {},
 }));
 
+const mockIsHostedEnvironment = vi.fn(() => false);
+const mockGetHostSigner = vi.fn();
+
+vi.mock("@/hooks/useHostAccount", () => ({
+  isHostedEnvironment: () => mockIsHostedEnvironment(),
+  getHostSigner: (...args: unknown[]) => mockGetHostSigner(...args),
+}));
+
 // Mock WebSocket for RPC calls
 class MockWebSocket {
   readyState = 1; // OPEN
@@ -130,6 +138,7 @@ describe("chain.ts security tests", () => {
   beforeEach(() => {
     resetBulletinApi();
     vi.clearAllMocks();
+    mockIsHostedEnvironment.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -356,6 +365,64 @@ describe("chain.ts security tests", () => {
       const expanded = expandChannels(compact);
       expect(expanded).toHaveLength(1);
       expect(expanded[0].logo_url).toBeNull();
+    });
+  });
+
+  describe("host signer integration", () => {
+    const validAddress = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+    const testChannels: Channel[] = [
+      {
+        id: "1",
+        name: "Test Channel",
+        group: "Test",
+        logo_url: null,
+        stream_url: "https://example.com/stream.m3u8",
+        is_live: false,
+      },
+    ];
+
+    it("uses host signer when hosted with publicKey", async () => {
+      mockIsHostedEnvironment.mockReturnValue(true);
+      const mockPublicKey = new Uint8Array(32).fill(99);
+      const mockSigner = { publicKey: mockPublicKey, sign: vi.fn() };
+      mockGetHostSigner.mockReturnValue(mockSigner);
+
+      // This will call isHostedEnvironment() + getHostSigner() during signer resolution
+      // The test verifies the signer resolution path, not the full chain submission
+      try {
+        await submitPlaylistToChain(validAddress, "host", "Test", testChannels, mockPublicKey);
+      } catch {
+        // Expected to fail on actual chain submission in test env
+      }
+
+      expect(mockGetHostSigner).toHaveBeenCalledWith(mockPublicKey);
+    });
+
+    it("falls back to dev key when hosted but no publicKey", async () => {
+      mockIsHostedEnvironment.mockReturnValue(true);
+
+      try {
+        await submitPlaylistToChain(validAddress, "host", "Test", testChannels);
+      } catch {
+        // Expected to fail on actual chain submission in test env
+      }
+
+      // Should NOT have called getHostSigner since no publicKey was provided
+      expect(mockGetHostSigner).not.toHaveBeenCalled();
+    });
+
+    it("falls back to dev key when not hosted", async () => {
+      mockIsHostedEnvironment.mockReturnValue(false);
+      const mockPublicKey = new Uint8Array(32).fill(99);
+
+      try {
+        await submitPlaylistToChain(validAddress, "source", "Test", testChannels, mockPublicKey);
+      } catch {
+        // Expected to fail on actual chain submission in test env
+      }
+
+      // Should NOT have called getHostSigner since not hosted
+      expect(mockGetHostSigner).not.toHaveBeenCalled();
     });
   });
 });

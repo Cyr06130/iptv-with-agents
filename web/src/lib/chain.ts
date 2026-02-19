@@ -10,6 +10,7 @@ import { createClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider/web";
 
 import { bulletinchain } from "@polkadot-api/descriptors";
+import { isHostedEnvironment, getHostSigner } from "@/hooks/useHostAccount";
 
 import type {
   Channel,
@@ -273,22 +274,33 @@ export function expandChannels(compact: CompactChannel[]): Channel[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Store a playlist on the Bulletin Chain using TransactionStorage.store()
- * wrapped in Sudo.sudo(), following the hackm3 pattern.
+ * Store a playlist on the Bulletin Chain using TransactionStorage.store().
+ *
+ * When running inside a host environment (Polkadot Desktop), the user signs
+ * directly via the host signer — no Sudo wrapper is used.
+ *
+ * When running in standalone dev mode, falls back to Alice dev key with
+ * Sudo.sudo() wrapper.
  *
  * Flow:
  *   1. Serialize channels → M3U → gzip compress
- *   2. TransactionStorage.store(compressed) via Sudo.sudo()
+ *   2. Store compressed data on-chain (directly or via Sudo)
  *   3. Compute CID locally (blake2b-256)
  *   4. system.remark_with_event("IPTVCID:{address}:{name}:{cid}") as pointer
  *
- * Signed with the dev key (Alice) — no wallet popup.
+ * @param address - SS58 address of the account
+ * @param _source - auth source (unused, kept for API compatibility)
+ * @param name - playlist name
+ * @param channels - channels to serialize
+ * @param publicKey - raw public key for host signing (from HostAccount/UnifiedAccount)
+ * @param signer - optional external signer override
  */
 export async function submitPlaylistToChain(
   address: string,
   _source: string,
   name: string,
   channels: Channel[],
+  publicKey?: Uint8Array,
   signer?: PolkadotSigner
 ): Promise<string> {
   if (!address || address.length < 46 || address.length > 48) {
@@ -303,7 +315,11 @@ export async function submitPlaylistToChain(
     apiResult = await getBulletinApi();
   }
   const { api } = apiResult;
-  const resolvedSigner = signer ?? await getAliceSigner();
+
+  // Resolve signer: explicit override > host signer (when hosted) > Alice dev key
+  const hosted = isHostedEnvironment();
+  const resolvedSigner: PolkadotSigner = signer
+    ?? (hosted && publicKey ? getHostSigner(publicKey) : await getAliceSigner());
 
   // 1. Serialize -> M3U -> gzip compress
   const m3uString = serializeToM3U(channels);
@@ -314,33 +330,56 @@ export async function submitPlaylistToChain(
   const cid = computeCID(compressed);
   const cidString = cid.toString();
 
-  // 3. Store data via TransactionStorage.store() wrapped in Sudo.sudo()
+  // 3. Store data — host path: user signs directly; dev path: Sudo wrapper
   const storeTx = api.tx.TransactionStorage.store({
     data: Binary.fromBytes(compressed),
   });
-  // decodedCall may be a Promise in newer PAPI versions
-  const decodedCallRaw = storeTx.decodedCall;
-  const decodedCall =
-    decodedCallRaw instanceof Promise ? await decodedCallRaw : decodedCallRaw;
-  const sudoStoreTx = api.tx.Sudo.sudo({
-    call: decodedCall,
-  });
 
-  const storeResult = await new Promise<string>((resolve, reject) => {
-    const sub = sudoStoreTx.signSubmitAndWatch(resolvedSigner).subscribe({
-      next: (event) => {
-        if (event.type === "finalized") {
-          sub.unsubscribe();
-          if (event.ok) {
-            resolve(event.txHash);
-          } else {
-            reject(new Error("TransactionStorage.store failed on-chain"));
+  let storeResult: string;
+
+  if (hosted && publicKey) {
+    // Host: user signs TransactionStorage.store() directly (no Sudo)
+    storeResult = await new Promise<string>((resolve, reject) => {
+      const sub = storeTx.signSubmitAndWatch(resolvedSigner).subscribe({
+        next: (event) => {
+          if (event.type === "finalized") {
+            sub.unsubscribe();
+            if (event.ok) {
+              resolve(event.txHash);
+            } else {
+              reject(new Error("TransactionStorage.store failed on-chain"));
+            }
           }
-        }
-      },
-      error: (err) => { sub.unsubscribe(); reject(err); },
+        },
+        error: (err) => { sub.unsubscribe(); reject(err); },
+      });
     });
-  });
+  } else {
+    // Dev: wrap in Sudo.sudo() signed by Alice
+    // decodedCall may be a Promise in newer PAPI versions
+    const decodedCallRaw = storeTx.decodedCall;
+    const decodedCall =
+      decodedCallRaw instanceof Promise ? await decodedCallRaw : decodedCallRaw;
+    const sudoStoreTx = api.tx.Sudo.sudo({
+      call: decodedCall,
+    });
+
+    storeResult = await new Promise<string>((resolve, reject) => {
+      const sub = sudoStoreTx.signSubmitAndWatch(resolvedSigner).subscribe({
+        next: (event) => {
+          if (event.type === "finalized") {
+            sub.unsubscribe();
+            if (event.ok) {
+              resolve(event.txHash);
+            } else {
+              reject(new Error("TransactionStorage.store failed on-chain"));
+            }
+          }
+        },
+        error: (err) => { sub.unsubscribe(); reject(err); },
+      });
+    });
+  }
 
   // 4. Submit CID pointer remark: IPTVCID:{address}:{encodedName}:{cid}
   const encodedName = encodeURIComponent(name);

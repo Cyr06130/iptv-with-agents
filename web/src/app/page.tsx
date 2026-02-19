@@ -39,6 +39,15 @@ export default function Home(): JSX.Element {
   const [chainPrompt, setChainPrompt] = useState<ChainPlaylistResponse | null>(null);
 
   const [epgChannel, setEpgChannel] = useState<Channel | null>(null);
+
+  // When the selected channel changes while the EPG overlay is open,
+  // update the overlay to show the new channel's programme guide.
+  useEffect(() => {
+    if (epgChannel && selectedChannel && epgChannel.id !== selectedChannel.id) {
+      setEpgChannel(selectedChannel);
+    }
+  }, [selectedChannel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [editMode, setEditMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -126,7 +135,7 @@ export default function Home(): JSX.Element {
               onChange={setSearchQuery}
               placeholder="Search channels..."
             />
-            <UploadButton onUploadComplete={refreshPlaylist} />
+            <UploadButton onUploadComplete={refreshPlaylist} hasExistingPlaylist={totalChannels > 0} />
             {totalChannels > 0 && (
               <button
                 type="button"
@@ -178,6 +187,7 @@ export default function Home(): JSX.Element {
                   address={account.address}
                   source={account.source}
                   playlist={playlist}
+                  publicKey={account.publicKey}
                 />
               )
             )}
