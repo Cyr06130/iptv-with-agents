@@ -13,7 +13,8 @@ dist/
 !.env.example
 secrets/
 
-# Agent results (regenerated each run)
+# Agent coordination and results (regenerated each run)
+coordination/
 agent-results/
 
 # Flutter
