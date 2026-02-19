@@ -6,6 +6,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "IPTV for friends!",
   description: "Decentralized IPTV streaming",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({

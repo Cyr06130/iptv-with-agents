@@ -11,8 +11,8 @@ use crate::services::epg_parser;
 /// Base URL for the iptv-org API.
 const IPTV_ORG_API: &str = "https://iptv-org.github.io/api";
 
-/// Base URL for the epg.pw hosted XMLTV files (by country code).
-const EPG_PW_BASE: &str = "https://epg.pw/xmltv";
+/// Base URL for iptv-epg.org hosted XMLTV files (by country code).
+const EPG_BASE: &str = "https://iptv-epg.org/files";
 
 /// HTTP timeout for fetching JSON indexes.
 const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
@@ -173,17 +173,17 @@ impl IptvOrgIndex {
 
     /// Get the EPG guide URL for an iptv-org channel ID.
     ///
-    /// Returns the URL to the country-level gzipped XMLTV file on epg.pw,
-    /// derived from the channel ID suffix (e.g., `TF1.fr` → `FR`).
+    /// Returns the URL to the country-level XMLTV file on iptv-epg.org,
+    /// derived from the channel ID suffix (e.g., `TF1.fr` → `fr`).
     pub fn get_guide_url(&self, iptv_org_id: &str) -> Option<String> {
-        // Derive country from channel ID suffix (e.g., "TF1.fr" -> "FR").
+        // Derive country from channel ID suffix (e.g., "TF1.fr" -> "fr").
         let country = iptv_org_id
             .rsplit('.')
             .next()
             .unwrap_or("us")
-            .to_uppercase();
+            .to_lowercase();
 
-        Some(format!("{EPG_PW_BASE}/epg_{country}.xml.gz"))
+        Some(format!("{EPG_BASE}/epg-{country}.xml"))
     }
 }
 
@@ -231,6 +231,9 @@ pub struct FetchedEpg {
 /// 2. Builds the country-level EPG URL (epg.pw)
 /// 3. Fetches and parses the full XMLTV guide
 /// 4. Returns all schedules and a display-name map for channel matching
+///
+/// The country code is derived from the channel ID suffix (e.g., `TF1.fr` → `FR`)
+/// and used as the default timezone when XMLTV timestamps lack explicit offsets.
 pub async fn fetch_channel_epg(
     client: &reqwest::Client,
     index: &IptvOrgIndex,
@@ -240,15 +243,20 @@ pub async fn fetch_channel_epg(
         .get_guide_url(iptv_org_id)
         .ok_or_else(|| IptvOrgError::NoGuide(iptv_org_id.to_string()))?;
 
-    info!("Fetching EPG for {iptv_org_id} from {url}");
+    let country = iptv_org_id.rsplit('.').next().unwrap_or("us");
+    info!("Fetching EPG for {iptv_org_id} from {url} (country={country})");
 
-    fetch_and_parse_guide(client, &url).await
+    fetch_and_parse_guide(client, &url, country).await
 }
 
 /// Fetch a single gzipped XMLTV guide, decompress, and parse all channels.
+///
+/// `country_code` is used to infer a default timezone offset when XMLTV
+/// timestamps do not include an explicit offset.
 async fn fetch_and_parse_guide(
     client: &reqwest::Client,
     url: &str,
+    country_code: &str,
 ) -> Result<FetchedEpg, IptvOrgError> {
     let response = client
         .get(url)
@@ -286,7 +294,8 @@ async fn fetch_and_parse_guide(
     }
 
     // Parse all channels (empty filter = accept all).
-    let parsed = epg_parser::parse_xmltv(&xml_str, &[])?;
+    let default_offset = epg_parser::country_utc_offset(country_code);
+    let parsed = epg_parser::parse_xmltv(&xml_str, &[], default_offset)?;
     Ok(FetchedEpg {
         schedules: parsed.schedules,
         display_names: parsed.display_names,
@@ -406,7 +415,7 @@ mod tests {
         let index = make_index();
         assert_eq!(
             index.get_guide_url("TF1.fr").unwrap(),
-            "https://epg.pw/xmltv/epg_FR.xml.gz"
+            "https://iptv-epg.org/files/epg-fr.xml"
         );
     }
 
@@ -415,7 +424,7 @@ mod tests {
         let index = make_index();
         assert_eq!(
             index.get_guide_url("CNN.us").unwrap(),
-            "https://epg.pw/xmltv/epg_US.xml.gz"
+            "https://iptv-epg.org/files/epg-us.xml"
         );
     }
 
@@ -425,7 +434,7 @@ mod tests {
         // Any iptv-org ID produces a URL based on the country suffix.
         assert_eq!(
             index.get_guide_url("Unknown.xx").unwrap(),
-            "https://epg.pw/xmltv/epg_XX.xml.gz"
+            "https://iptv-epg.org/files/epg-xx.xml"
         );
     }
 

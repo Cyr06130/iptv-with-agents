@@ -10,6 +10,43 @@ use crate::models::epg::{EpgProgram, EpgSchedule};
 /// Maximum allowed XML input size (50 MB) to prevent XML bomb attacks.
 const MAX_XML_SIZE: usize = 50 * 1024 * 1024;
 
+/// Map a two-letter country code to its standard UTC offset in seconds.
+///
+/// Uses winter/standard-time offsets. XMLTV sources that include explicit
+/// timezone offsets in their timestamps will override this default.
+pub fn country_utc_offset(country_code: &str) -> i32 {
+    match country_code.to_uppercase().as_str() {
+        // UTC+0
+        "GB" | "UK" | "IE" | "IS" | "PT" => 0,
+        // CET  UTC+1
+        "FR" | "DE" | "IT" | "ES" | "NL" | "BE" | "AT" | "CH" | "PL" | "CZ" | "HU" | "SE"
+        | "NO" | "DK" | "HR" | "RS" | "SI" | "SK" | "BA" | "ME" | "MK" | "AL" | "MT" | "LU"
+        | "LI" => 3600,
+        // EET  UTC+2
+        "FI" | "RO" | "BG" | "GR" | "EE" | "LV" | "LT" | "UA" | "MD" | "CY" | "ZA" => 7200,
+        // MSK  UTC+3
+        "RU" | "TR" | "BY" | "KE" | "TZ" | "SA" | "QA" | "BH" | "KW" | "IQ" => 10800,
+        // IST  UTC+5:30
+        "IN" | "LK" => 19800,
+        // ICT  UTC+7
+        "VN" | "TH" | "ID" | "KH" | "LA" => 25200,
+        // CST/SGT/MYT/PHT  UTC+8
+        "CN" | "HK" | "TW" | "SG" | "MY" | "PH" | "BN" => 28800,
+        // JST/KST  UTC+9
+        "JP" | "KR" => 32400,
+        // AEST  UTC+10
+        "AU" => 36000,
+        // NZST  UTC+12
+        "NZ" => 43200,
+        // Americas
+        "BR" | "AR" | "UY" => -10800,  // BRT/ART  UTC-3
+        "VE" | "CL" | "PY" | "BO" => -14400, // UTC-4
+        "US" | "CA" | "CO" | "PE" | "EC" | "PA" => -18000, // EST/COT  UTC-5
+        "MX" | "CR" | "SV" | "GT" | "HN" | "NI" => -21600, // CST  UTC-6
+        _ => 0,
+    }
+}
+
 /// Errors that can occur while parsing XMLTV data.
 #[derive(Debug, Error)]
 pub enum EpgParseError {
@@ -38,10 +75,15 @@ pub struct ParsedXmltv {
 /// attribute is present in the set are included. When it is empty, **all**
 /// programmes are parsed (useful for country-level EPG files).
 ///
+/// `default_utc_offset_secs` is used when a programme timestamp lacks an
+/// explicit timezone offset. Pass `0` for UTC, or use [`country_utc_offset`]
+/// to infer from the channel's country code.
+///
 /// The input is validated against [`MAX_XML_SIZE`] before parsing begins.
 pub fn parse_xmltv(
     xml: &str,
     known_channel_ids: &[&str],
+    default_utc_offset_secs: i32,
 ) -> Result<ParsedXmltv, EpgParseError> {
     if xml.len() > MAX_XML_SIZE {
         return Err(EpgParseError::TooLarge);
@@ -112,8 +154,14 @@ pub fn parse_xmltv(
                                 .unwrap_or_default();
                             match key {
                                 "channel" => current_channel_id = value.to_string(),
-                                "start" => current_start = parse_xmltv_datetime(value),
-                                "stop" => current_stop = parse_xmltv_datetime(value),
+                                "start" => {
+                                    current_start =
+                                        parse_xmltv_datetime(value, default_utc_offset_secs)
+                                }
+                                "stop" => {
+                                    current_stop =
+                                        parse_xmltv_datetime(value, default_utc_offset_secs)
+                                }
                                 _ => {}
                             }
                         }
@@ -241,22 +289,25 @@ pub fn parse_xmltv(
 /// Parse an XMLTV datetime string into a UTC [`DateTime`].
 ///
 /// XMLTV dates follow the format `YYYYMMDDHHmmss +HHMM` (the timezone
-/// offset may be absent, in which case UTC is assumed). Examples:
+/// offset may be absent). When the offset is missing,
+/// `default_offset_secs` is used instead of assuming UTC.
 ///
-/// - `20260211140000 +0000`
-/// - `20260211150000 +0100`
-/// - `20260211140000`
-fn parse_xmltv_datetime(s: &str) -> Option<DateTime<Utc>> {
+/// Examples:
+///
+/// - `20260211140000 +0000`  → 14:00 UTC
+/// - `20260211150000 +0100`  → 14:00 UTC (15:00 CET)
+/// - `20260211140000`        → interpreted using `default_offset_secs`
+fn parse_xmltv_datetime(s: &str, default_offset_secs: i32) -> Option<DateTime<Utc>> {
     let s = s.trim();
 
     // Split into datetime part and optional timezone offset.
     let (dt_part, tz_offset_secs) = if s.len() > 14 {
         let dt = &s[..14];
         let tz_str = s[14..].trim();
-        let offset = parse_tz_offset(tz_str).unwrap_or(0);
+        let offset = parse_tz_offset(tz_str).unwrap_or(default_offset_secs);
         (dt, offset)
     } else {
-        (s, 0i32)
+        (s, default_offset_secs)
     };
 
     let naive = NaiveDateTime::parse_from_str(dt_part, "%Y%m%d%H%M%S").ok()?;
@@ -312,7 +363,7 @@ mod tests {
   </programme>
 </tv>"#;
 
-        let parsed = parse_xmltv(xml, &["CNN.us"]).unwrap();
+        let parsed = parse_xmltv(xml, &["CNN.us"], 0).unwrap();
         assert_eq!(parsed.schedules.len(), 1);
 
         let schedule = parsed.schedules.get("CNN.us").unwrap();
@@ -346,7 +397,7 @@ mod tests {
   </programme>
 </tv>"#;
 
-        let parsed = parse_xmltv(xml, &["BBC.uk"]).unwrap();
+        let parsed = parse_xmltv(xml, &["BBC.uk"], 0).unwrap();
         assert!(!parsed.schedules.contains_key("CNN.us"));
         assert_eq!(parsed.schedules.get("BBC.uk").unwrap().programs.len(), 1);
     }
@@ -363,7 +414,7 @@ mod tests {
   </programme>
 </tv>"#;
 
-        let parsed = parse_xmltv(xml, &[]).unwrap();
+        let parsed = parse_xmltv(xml, &[], 0).unwrap();
         assert_eq!(parsed.schedules.len(), 2);
         assert!(parsed.schedules.contains_key("CNN.us"));
         assert!(parsed.schedules.contains_key("BBC.uk"));
@@ -372,27 +423,54 @@ mod tests {
     #[test]
     fn rejects_oversized_input() {
         let huge = "x".repeat(MAX_XML_SIZE + 1);
-        let err = parse_xmltv(&huge, &[]).unwrap_err();
+        let err = parse_xmltv(&huge, &[], 0).unwrap_err();
         assert!(matches!(err, EpgParseError::TooLarge));
     }
 
     #[test]
     fn parse_xmltv_datetime_utc() {
-        let dt = parse_xmltv_datetime("20260211140000 +0000").unwrap();
+        let dt = parse_xmltv_datetime("20260211140000 +0000", 0).unwrap();
         assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 14, 0, 0).unwrap());
     }
 
     #[test]
     fn parse_xmltv_datetime_with_offset() {
-        let dt = parse_xmltv_datetime("20260211150000 +0100").unwrap();
+        let dt = parse_xmltv_datetime("20260211150000 +0100", 0).unwrap();
         // +0100 means local 15:00 is UTC 14:00.
         assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 14, 0, 0).unwrap());
     }
 
     #[test]
-    fn parse_xmltv_datetime_no_tz() {
-        let dt = parse_xmltv_datetime("20260211140000").unwrap();
+    fn parse_xmltv_datetime_no_tz_uses_default() {
+        // With default=0 (UTC), 14:00 stays 14:00 UTC.
+        let dt = parse_xmltv_datetime("20260211140000", 0).unwrap();
         assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 14, 0, 0).unwrap());
+
+        // With default=3600 (CET +0100), 14:00 CET = 13:00 UTC.
+        let dt = parse_xmltv_datetime("20260211140000", 3600).unwrap();
+        assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 13, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn explicit_offset_overrides_default() {
+        // Explicit +0100 overrides the default of 0 (UTC).
+        let dt = parse_xmltv_datetime("20260211150000 +0100", 0).unwrap();
+        assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 14, 0, 0).unwrap());
+
+        // Explicit +0100 overrides a different default too.
+        let dt = parse_xmltv_datetime("20260211150000 +0100", -18000).unwrap();
+        assert_eq!(dt, Utc.with_ymd_and_hms(2026, 2, 11, 14, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn country_utc_offset_known_countries() {
+        assert_eq!(country_utc_offset("FR"), 3600);
+        assert_eq!(country_utc_offset("US"), -18000);
+        assert_eq!(country_utc_offset("GB"), 0);
+        assert_eq!(country_utc_offset("JP"), 32400);
+        assert_eq!(country_utc_offset("IN"), 19800);
+        // Unknown defaults to 0.
+        assert_eq!(country_utc_offset("XX"), 0);
     }
 
     #[test]
@@ -404,6 +482,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_with_country_default_offset() {
+        // XMLTV times without explicit offsets, parsed with CET default (+0100).
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <programme start="20260211190000" stop="20260211200000" channel="France2">
+    <title>Journal 19h</title>
+  </programme>
+</tv>"#;
+
+        let cet_offset = country_utc_offset("FR");
+        let parsed = parse_xmltv(xml, &["France2"], cet_offset).unwrap();
+        let schedule = parsed.schedules.get("France2").unwrap();
+        // 19:00 CET = 18:00 UTC.
+        assert_eq!(
+            schedule.programs[0].start,
+            Utc.with_ymd_and_hms(2026, 2, 11, 18, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
     fn skips_programmes_without_title() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <tv>
@@ -412,7 +510,7 @@ mod tests {
   </programme>
 </tv>"#;
 
-        let parsed = parse_xmltv(xml, &["CNN.us"]).unwrap();
+        let parsed = parse_xmltv(xml, &["CNN.us"], 0).unwrap();
         assert!(parsed.schedules.is_empty());
     }
 
@@ -428,7 +526,7 @@ mod tests {
   </programme>
 </tv>"#;
 
-        let parsed = parse_xmltv(xml, &["CH1"]).unwrap();
+        let parsed = parse_xmltv(xml, &["CH1"], 0).unwrap();
         let schedule = parsed.schedules.get("CH1").unwrap();
         assert_eq!(schedule.programs[0].title, "Earlier");
         assert_eq!(schedule.programs[1].title, "Later");

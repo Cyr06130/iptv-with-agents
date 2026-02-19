@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,9 @@ pub struct EpgNowNext {
     pub next: Option<EpgProgram>,
 }
 
+/// How long cached EPG data stays fresh before a re-fetch (15 minutes).
+const EPG_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
 /// In-memory cache for parsed EPG data, populated on-demand per channel.
 #[derive(Debug)]
 pub struct EpgCache {
@@ -68,13 +71,27 @@ impl EpgCache {
         }
     }
 
-    /// Look up today's schedule for a channel.
+    /// Whether the cache needs refreshing.
+    pub fn is_stale(&self) -> bool {
+        match self.last_updated {
+            Some(ts) => ts.elapsed() > EPG_CACHE_TTL,
+            None => true,
+        }
+    }
+
+    /// Look up today's schedule for a channel, only if the cache is fresh.
     pub fn get_schedule(&self, channel_id: &str) -> Option<&EpgSchedule> {
+        if self.is_stale() {
+            return None;
+        }
         self.schedules.get(channel_id)
     }
 
     /// Find the current and next programme for a channel based on `now`.
     pub fn get_now_next(&self, channel_id: &str, now: DateTime<Utc>) -> Option<EpgNowNext> {
+        if self.is_stale() {
+            return None;
+        }
         let schedule = self.schedules.get(channel_id)?;
         let mut current = None;
         let mut next = None;
@@ -129,6 +146,7 @@ mod tests {
     #[test]
     fn get_now_next_finds_current_program() {
         let mut cache = EpgCache::new();
+        cache.last_updated = Some(Instant::now());
         cache.schedules.insert(
             "CNN.us".to_string(),
             EpgSchedule {
@@ -150,6 +168,7 @@ mod tests {
     #[test]
     fn get_now_next_no_current_returns_next() {
         let mut cache = EpgCache::new();
+        cache.last_updated = Some(Instant::now());
         cache.schedules.insert(
             "BBC.uk".to_string(),
             EpgSchedule {

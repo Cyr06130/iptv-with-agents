@@ -65,7 +65,7 @@ export function ChannelList({
                     <img
                       src={channel.logo_url}
                       alt={channel.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[var(--color-text-tertiary)] text-xs font-mono">

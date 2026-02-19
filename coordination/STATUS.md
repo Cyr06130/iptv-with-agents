@@ -308,6 +308,68 @@ E2E Tests (Playwright):
 - `npx playwright test` -- 10/10 E2E tests PASS
 - All security test tasks (TASK-SEC-T1 through TASK-SEC-T5) COMPLETE
 
+## frontend-core -- Host Auth Integration: Tasks #2 and #3 (COMPLETED 2026-02-19)
+
+### Tasks completed:
+1. **Task #2: Create useHostAccount hook**
+   - Created `/Users/cdr/Dev/iptv-with-agents/web/src/hooks/useHostAccount.ts`
+   - `isHostedEnvironment()` — sync check for `window.__HOST_WEBVIEW_MARK__ === true` or `window !== window.top`; SSR-safe
+   - `useHostAccounts()` hook — fetches accounts via `createAccountsProvider().getNonProductAccounts()`, converts publicKey to SS58 address via `AccountId().dec()`
+   - `getHostSigner(publicKey)` — returns `PolkadotSigner` via `getNonProductAccountSigner()` for chain ops
+   - `HostAccount` type with `address`, `name?`, and `publicKey` fields
+
+2. **Task #3: Extend UnifiedAccountContext to support "host" auth source**
+   - Modified `/Users/cdr/Dev/iptv-with-agents/web/src/contexts/UnifiedAccountContext.tsx`
+   - Added `"host"` to `source` union in `UnifiedAccount` type (now `"host" | "papp" | "extension"`)
+   - Added optional `publicKey?: Uint8Array` field to `UnifiedAccount` for signer use
+   - Added `"host"` to `authSource` union in context value type
+   - Imported and wired `useHostAccounts` — host accounts merged first (highest priority)
+   - Auto-selects first host account when in hosted environment
+   - `disconnect()` is a no-op when selected account is a host account
+   - Host accounts deduplicated by address before papp and extension accounts
+
+### Files modified:
+- `/Users/cdr/Dev/iptv-with-agents/web/src/hooks/useHostAccount.ts` (NEW)
+- `/Users/cdr/Dev/iptv-with-agents/web/src/contexts/UnifiedAccountContext.tsx` (MODIFIED)
+
+### Verification:
+- `npm run type-check` — OK (only pre-existing `__tests__/setup.ts` vitest type errors remain)
+
+## frontend-ui -- Host Auth Integration: Tasks #4 and #5 (COMPLETED 2026-02-19)
+
+### Tasks completed:
+
+1. **Task #5: Use host signer for chain operations in chain.ts**
+   - Modified `/Users/cdr/Dev/iptv-with-agents/web/src/lib/chain.ts`
+   - Imported `isHostedEnvironment` and `getHostSigner` from `@/hooks/useHostAccount`
+   - Added `publicKey?: Uint8Array` parameter to `submitPlaylistToChain()`
+   - Signer resolution: explicit override > host signer (when hosted + publicKey) > Alice dev key
+   - When hosted: user signs `TransactionStorage.store()` directly (no `Sudo.sudo()` wrapper)
+   - When in dev mode: falls back to Alice dev key with `Sudo.sudo()` as before
+   - Updated `useChainPlaylist.ts`: `saveToChain` accepts `publicKey?: Uint8Array` and passes it through
+   - Updated `SaveToChainButton.tsx`: accepts `publicKey?: Uint8Array` prop and passes to `saveToChain`
+   - Updated `app/page.tsx`: passes `account.publicKey` down to `SaveToChainButton`
+
+2. **Task #4: Update ConnectWallet UI to skip auth when hosted**
+   - Modified `/Users/cdr/Dev/iptv-with-agents/web/src/components/ConnectWallet.tsx`
+   - Added `authSource` from `useUnifiedAccount()` context
+   - Added early-return path for `isHosted && isConnected`: renders static account display (no interactive elements)
+   - Sign-in button and wallet extension button are never shown when `authSource === "host"`
+   - Disconnect button in account menu hidden when `authSource === "host"`
+   - Added `"host"` to `AccountItem` source label: shows "Polkadot Desktop"
+
+### Files modified:
+- `/Users/cdr/Dev/iptv-with-agents/web/src/lib/chain.ts` (MODIFIED)
+- `/Users/cdr/Dev/iptv-with-agents/web/src/hooks/useChainPlaylist.ts` (MODIFIED)
+- `/Users/cdr/Dev/iptv-with-agents/web/src/components/SaveToChainButton.tsx` (MODIFIED)
+- `/Users/cdr/Dev/iptv-with-agents/web/src/app/page.tsx` (MODIFIED)
+- `/Users/cdr/Dev/iptv-with-agents/web/src/components/ConnectWallet.tsx` (MODIFIED)
+- `/Users/cdr/Dev/iptv-with-agents/web/__tests__/components/ConnectWallet.test.tsx` (MODIFIED — added host tests, fixed `useSessionIdentity` mock)
+
+### Verification:
+- `npx tsc --noEmit` (src/ only) — zero errors
+- `npx vitest run __tests__/components/ConnectWallet.test.tsx` — 9/9 tests PASS
+
 ## blockchain-dev -- EPG Backend Implementation (COMPLETED 2026-02-11)
 
 ### Task: Design EPG data model and API contracts

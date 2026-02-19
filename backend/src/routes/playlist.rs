@@ -1,14 +1,23 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 
 use crate::models::AppState;
 use crate::services::m3u_parser;
+
+/// Query parameters for the playlist upload endpoint.
+#[derive(Debug, Deserialize)]
+pub struct UploadQuery {
+    /// Upload mode: "append" to add new channels, "replace" to overwrite (default).
+    pub mode: Option<String>,
+}
 
 /// Returns the full playlist as a JSON array of channels.
 pub async fn get_playlist(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -16,14 +25,21 @@ pub async fn get_playlist(State(state): State<Arc<AppState>>) -> impl IntoRespon
     Json(serde_json::to_value(&*playlist).unwrap_or_default())
 }
 
-/// Accepts an M3U file upload and replaces the current in-memory playlist.
+/// Accepts an M3U file upload and updates the current in-memory playlist.
 ///
 /// The request must be a `multipart/form-data` with a field named `file`
-/// containing valid M3U content.
+/// containing valid M3U content. An optional `mode` query parameter controls
+/// the upload behavior:
+/// - `"replace"` (default): replaces the entire playlist with the uploaded channels.
+/// - `"append"`: adds new channels from the upload, skipping any whose
+///   `stream_url` already exists in the current playlist.
 pub async fn upload_playlist(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let append_mode = query.mode.as_deref() == Some("append");
+
     while let Some(field) = multipart
         .next_field()
         .await
@@ -38,21 +54,52 @@ pub async fn upload_playlist(
             let content = String::from_utf8(bytes.to_vec())
                 .map_err(|_| (StatusCode::BAD_REQUEST, "File is not valid UTF-8".to_string()))?;
 
-            let channels = m3u_parser::parse_m3u(&content);
-            let count = channels.len();
+            let new_channels = m3u_parser::parse_m3u(&content);
+            let new_count = new_channels.len();
 
-            {
+            let total_channels = {
                 let mut playlist = state.playlist.write().await;
-                playlist.channels = channels;
+
+                if append_mode {
+                    let existing_urls: HashSet<&str> = playlist
+                        .channels
+                        .iter()
+                        .map(|ch| ch.stream_url.as_str())
+                        .collect();
+
+                    let unique_new: Vec<_> = new_channels
+                        .into_iter()
+                        .filter(|ch| !existing_urls.contains(ch.stream_url.as_str()))
+                        .collect();
+
+                    let appended = unique_new.len();
+                    playlist.channels.extend(unique_new);
+                    playlist.source = "upload".to_string();
+
+                    let total = playlist.channels.len();
+
+                    // Trigger an immediate liveness check.
+                    state.check_now.notify_one();
+
+                    return Ok(Json(serde_json::json!({
+                        "status": "ok",
+                        "channels_loaded": appended,
+                        "total_channels": total
+                    })));
+                }
+
+                playlist.channels = new_channels;
                 playlist.source = "upload".to_string();
-            }
+                playlist.channels.len()
+            };
 
             // Trigger an immediate liveness check for the new playlist.
             state.check_now.notify_one();
 
             return Ok(Json(serde_json::json!({
                 "status": "ok",
-                "channels_loaded": count
+                "channels_loaded": new_count,
+                "total_channels": total_channels
             })));
         }
     }

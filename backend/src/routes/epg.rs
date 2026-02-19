@@ -1,22 +1,93 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
-use chrono::Utc;
+use chrono::{FixedOffset, Utc};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use crate::models::AppState;
 use crate::services::iptv_org;
 
+/// Query parameters for EPG endpoints.
+#[derive(Debug, Deserialize)]
+pub struct EpgQuery {
+    /// Timezone offset for response times (e.g., `"+0100"`, `"-0500"`).
+    /// When provided, all programme start/end times in the response are
+    /// converted from UTC to the given offset.
+    pub tz: Option<String>,
+}
+
+/// Parse a timezone offset string (e.g., `"+0100"`) into a [`FixedOffset`].
+fn parse_tz_param(tz: &str) -> Option<FixedOffset> {
+    let tz = tz.trim();
+    if tz.is_empty() {
+        return FixedOffset::east_opt(0);
+    }
+
+    let (sign, rest) = match tz.as_bytes().first()? {
+        b'+' => (1i32, &tz[1..]),
+        b'-' => (-1i32, &tz[1..]),
+        _ => (1i32, tz),
+    };
+
+    if rest.len() < 4 {
+        return None;
+    }
+
+    let hours: i32 = rest[..2].parse().ok()?;
+    let minutes: i32 = rest[2..4].parse().ok()?;
+    let total_secs = sign * (hours * 3600 + minutes * 60);
+    FixedOffset::east_opt(total_secs)
+}
+
+/// Apply a timezone offset to all programme times in a JSON value.
+///
+/// Converts `start` and `end` fields from UTC ISO-8601 strings to
+/// offset-aware ISO-8601 strings in the requested timezone.
+fn apply_tz_to_schedule(value: &mut Value, offset: &FixedOffset) {
+    if let Some(programs) = value.get_mut("programs").and_then(|v| v.as_array_mut()) {
+        for prog in programs {
+            convert_time_field(prog, "start", offset);
+            convert_time_field(prog, "end", offset);
+        }
+    }
+}
+
+/// Apply a timezone offset to now/next programme times in a JSON value.
+fn apply_tz_to_now_next(value: &mut Value, offset: &FixedOffset) {
+    if let Some(now) = value.get_mut("now") {
+        convert_time_field(now, "start", offset);
+        convert_time_field(now, "end", offset);
+    }
+    if let Some(next) = value.get_mut("next") {
+        convert_time_field(next, "start", offset);
+        convert_time_field(next, "end", offset);
+    }
+}
+
+/// Convert a single time field from UTC to the given offset.
+fn convert_time_field(obj: &mut Value, field: &str, offset: &FixedOffset) {
+    if let Some(time_str) = obj.get(field).and_then(|v| v.as_str()) {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(time_str) {
+            let converted = dt.with_timezone(offset);
+            obj[field] = Value::String(converted.to_rfc3339());
+        }
+    }
+}
+
 /// Returns today's EPG schedule for a specific channel.
 ///
 /// Fetches EPG data on-demand from iptv-org if not cached.
 /// The `channel_id` can be a tvg_id (e.g., "TF1.fr") or an M3U channel name.
+///
+/// Accepts an optional `?tz=` query parameter (e.g., `?tz=+0100`) to return
+/// programme times in the requested timezone instead of UTC.
 ///
 /// # Route
 ///
@@ -24,15 +95,22 @@ use crate::services::iptv_org;
 pub async fn get_schedule(
     State(state): State<Arc<AppState>>,
     Path(channel_id): Path<String>,
+    Query(query): Query<EpgQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
-    debug!("EPG schedule request for channel: {channel_id}");
+    debug!("EPG schedule request for channel: {channel_id} (tz={:?})", query.tz);
+
+    let tz_offset = query.tz.as_deref().and_then(parse_tz_param);
 
     // Check cache first.
     {
         let cache = state.epg_cache.read().await;
         if let Some(schedule) = cache.get_schedule(&channel_id) {
             debug!("EPG cache hit for {channel_id}");
-            return Ok(Json(serde_json::to_value(schedule).unwrap_or_default()));
+            let mut value = serde_json::to_value(schedule).unwrap_or_default();
+            if let Some(ref offset) = tz_offset {
+                apply_tz_to_schedule(&mut value, offset);
+            }
+            return Ok(Json(value));
         }
     }
 
@@ -46,7 +124,11 @@ pub async fn get_schedule(
         // Re-check cache after fetch.
         let cache = state.epg_cache.read().await;
         if let Some(schedule) = cache.get_schedule(&channel_id) {
-            return Ok(Json(serde_json::to_value(schedule).unwrap_or_default()));
+            let mut value = serde_json::to_value(schedule).unwrap_or_default();
+            if let Some(ref offset) = tz_offset {
+                apply_tz_to_schedule(&mut value, offset);
+            }
+            return Ok(Json(value));
         }
     }
 
@@ -60,20 +142,29 @@ pub async fn get_schedule(
 ///
 /// Fetches EPG data on-demand from iptv-org if not cached.
 ///
+/// Accepts an optional `?tz=` query parameter (e.g., `?tz=+0100`) to return
+/// programme times in the requested timezone instead of UTC.
+///
 /// # Route
 ///
 /// `GET /api/epg/:channel_id/now`
 pub async fn get_now_next(
     State(state): State<Arc<AppState>>,
     Path(channel_id): Path<String>,
+    Query(query): Query<EpgQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let now = Utc::now();
+    let tz_offset = query.tz.as_deref().and_then(parse_tz_param);
 
     // Check cache first.
     {
         let cache = state.epg_cache.read().await;
         if let Some(now_next) = cache.get_now_next(&channel_id, now) {
-            return Ok(Json(serde_json::to_value(&now_next).unwrap_or_default()));
+            let mut value = serde_json::to_value(&now_next).unwrap_or_default();
+            if let Some(ref offset) = tz_offset {
+                apply_tz_to_now_next(&mut value, offset);
+            }
+            return Ok(Json(value));
         }
     }
 
@@ -86,7 +177,11 @@ pub async fn get_now_next(
         // Re-check cache after fetch.
         let cache = state.epg_cache.read().await;
         if let Some(now_next) = cache.get_now_next(&channel_id, now) {
-            return Ok(Json(serde_json::to_value(&now_next).unwrap_or_default()));
+            let mut value = serde_json::to_value(&now_next).unwrap_or_default();
+            if let Some(ref offset) = tz_offset {
+                apply_tz_to_now_next(&mut value, offset);
+            }
+            return Ok(Json(value));
         }
     }
 
