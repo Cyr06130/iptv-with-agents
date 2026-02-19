@@ -43,7 +43,7 @@ jobs:
     uses: Cyr06130/claude-certificate/.github/workflows/deploy-to-triangle.yml@main
     with:
       artifact-name: iptv-static
-      dotns-domain: iptv
+      dotns-domain: iptv-web3
       skip-cache: ${{ inputs.skip-cache || false }}
       comment-on-pr: true
     secrets:
