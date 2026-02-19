@@ -12,6 +12,9 @@ import { SaveToChainButton } from "@/components/SaveToChainButton";
 import { LoadFromChainPrompt } from "@/components/LoadFromChainPrompt";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
 import { EpgOverlay } from "@/components/EpgOverlay";
+import { CastButton } from "@/components/CastButton";
+import { TransferNotification } from "@/components/TransferNotification";
+import { useHostSync } from "@/hooks/useHostSync";
 import type { Channel, ChainPlaylistResponse } from "@/lib/types";
 
 export default function Home(): JSX.Element {
@@ -29,12 +32,35 @@ export default function Home(): JSX.Element {
     removeChannels,
   } = usePlaylist();
 
-  const { selectedAccount: account } = useUnifiedAccount();
+  const { selectedAccount: account, authSource } = useUnifiedAccount();
   const { loadFromChain } = useChainPlaylist();
 
   const totalChannels = playlist?.channels.length ?? 0;
   const liveChannels = playlist?.channels.filter((ch) => ch.is_live).length ?? 0;
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+
+  const {
+    available: syncAvailable,
+    peers,
+    sendTransfer,
+    pendingTransfer,
+    incomingTransfer,
+    approveTransfer,
+    rejectTransfer,
+    acceptTransfer,
+    dismissTransfer,
+    toastMessage,
+    clearToast,
+  } = useHostSync(
+    account?.address ?? null,
+    authSource,
+    selectedChannel?.id ?? null
+  );
+
+  function handleAcceptTransfer(): void {
+    const channel = acceptTransfer();
+    if (channel) setSelectedChannel(channel);
+  }
 
   const [chainPrompt, setChainPrompt] = useState<ChainPlaylistResponse | null>(null);
 
@@ -222,6 +248,16 @@ export default function Home(): JSX.Element {
               onClose={() => setEpgChannel(null)}
             />
           )}
+          {/* Cast button */}
+          {selectedChannel && (
+            <div className="absolute bottom-4 right-4">
+              <CastButton
+                peers={peers}
+                pending={pendingTransfer}
+                onSend={(target) => sendTransfer(target, selectedChannel)}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -243,6 +279,27 @@ export default function Home(): JSX.Element {
           onConfirm={handleConfirmDelete}
           onCancel={() => setShowDeleteModal(false)}
         />
+      )}
+
+      {/* Transfer notification */}
+      {incomingTransfer && (
+        <TransferNotification
+          transfer={incomingTransfer}
+          onApprove={approveTransfer}
+          onReject={rejectTransfer}
+          onAccept={handleAcceptTransfer}
+          onDismiss={dismissTransfer}
+        />
+      )}
+
+      {/* Toast */}
+      {toastMessage && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-lg text-sm text-[var(--color-text-primary)]"
+          onClick={clearToast}
+        >
+          {toastMessage}
+        </div>
       )}
     </div>
   );

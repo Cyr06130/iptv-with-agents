@@ -1,0 +1,50 @@
+name: Build & Deploy to Polkadot Triangle
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip-cache:
+        description: "Skip deployment cache and force redeploy"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build Static Site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+
+      - name: Build static export
+        working-directory: web
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iptv-static
+          path: web/out
+          retention-days: 1
+
+  deploy:
+    needs: build
+    uses: Cyr06130/claude-certificate/.github/workflows/deploy-to-triangle.yml@main
+    with:
+      artifact-name: iptv-static
+      dotns-domain: iptv
+      skip-cache: ${{ inputs.skip-cache || false }}
+      comment-on-pr: true
+    secrets:
+      mnemonic: ${{ secrets.DOTNS_MNEMONIC }}
